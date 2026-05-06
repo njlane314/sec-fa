@@ -201,7 +201,7 @@ The mature form of this system is not larger in spirit. It should remain a chain
 Future additions should respect the existing shape:
 
 ```text
-full XBRL parser       -> writes canonical_fact events
+XBRL package parser    -> writes raw facts and canonical observations
 IBKR adapter           -> reads staged orders, writes broker events
 web dashboard          -> reads events/views, never becomes authority
 MCP interface          -> read-only initially, never direct broker execution
@@ -215,3 +215,21 @@ The most important product is not the alpha model. It is the auditable path from
 - Doug McIlroy's UNIX philosophy: programs should do one thing well, work together, and use streams as a universal interface.
 - Gerard Holzmann's NASA/JPL Power of Ten discipline: restrict control flow, bound resource use, check return values, keep functions small, use assertions, avoid excessive preprocessing, and build code that tools can analyze.
 - NASA software assurance practice: requirements, coding standards, static analysis, test evidence, and traceability are engineering artefacts, not paperwork.
+
+## Accounting observations are not scalars
+
+A financial metric name is not a value. `revenue`, `cash`, and `EPS` are families of observations distinguished by measurement basis, reporting interval, period semantics, unit, dimensional scope, and source lineage.
+
+Therefore the system shall not collapse raw SEC facts directly into model features. The required chain is:
+
+```text
+source_documents
+  -> xbrl_contexts / xbrl_units / xbrl_facts
+  -> canonical_observations
+  -> derived observations with lineage
+  -> model features
+```
+
+A quarterly revenue fact, a six-month YTD revenue fact, and an annual revenue fact may share the same accounting concept. They are not interchangeable. The canonical layer must preserve `period_semantics`, `duration_days`, `basis_id`, `unit_signature`, and `dimensions_hash`; the C++ core must reject model comparisons whose period, basis, or dimensional scope is incompatible.
+
+The design preference is conservative failure. An ambiguous candidate set is evidence, not permission. The resolver may store an ambiguous observation with flags for audit, but the model kernel must not treat that observation as comparable input.

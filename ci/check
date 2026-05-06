@@ -32,28 +32,134 @@ def run(args):
         raise SystemExit(f"command failed rc={rc}: {args}")
 
 run(['init-db', '--db', db])
-run(['security-upsert', '--db', db, '--cik', '0000000001', '--symbol', 'AAA', '--price-usd', '100', '--adv-usd', '10000000', '--investable', '1'])
+run(['security-upsert', '--db', db, '--cik', '0000000001', '--symbol', 'AAA', '--price-usd', '10', '--adv-usd', '10000000', '--investable', '1'])
 run(['security-upsert', '--db', db, '--cik', '0000000002', '--symbol', 'BBB', '--price-usd', '100', '--adv-usd', '10000000', '--investable', '1'])
 run(['position-upsert', '--db', db, '--cik', '0000000001', '--quantity-shares', '0', '--market-value-usd', '0', '--weight-ratio', '0'])
 
+fixture = repo / 'tests' / 'fixtures' / 'sec-package'
+run([
+    'xbrl-parse', '--db', db, '--accession', '0000000003-24-000001', '--cik', '0000000003',
+    '--form', '10-Q', '--filed-at', '2024-04-30', '--accepted-at', '2024-04-30T12:00:00Z',
+    '--raw-root', str(Path(db).parent / 'raw'), '--package-root', str(fixture), '--strict', '--sleep-s', '0'
+])
+conn = sqlite3.connect(db)
+assert conn.execute('select count(*) from source_documents').fetchone()[0] >= 3
+assert conn.execute('select count(*) from xbrl_contexts').fetchone()[0] >= 4
+assert conn.execute('select count(*) from xbrl_units').fetchone()[0] >= 1
+assert conn.execute('select count(*) from dimension_signatures').fetchone()[0] >= 2
+assert conn.execute("select count(*) from xbrl_facts where accession_number='0000000003-24-000001'").fetchone()[0] == 7
+assert conn.execute("select count(*) from canonical_observations where security_id=3").fetchone()[0] == 3
+assert conn.execute("select count(*) from canonical_observations where security_id=3 and dimensional_scope!='consolidated_total'").fetchone()[0] == 0
+conn.close()
+
 conn = sqlite3.connect(db)
 now = dt.datetime.now(dt.UTC).isoformat(timespec='seconds').replace('+00:00','Z')
-def ins(sec, metric, value, end):
+
+def period_id(sec, start, end):
+    return fa.stable_id('period', {'sec': sec, 'start': start, 'end': end})
+
+def ins_period(sec, start, end):
+    pid = period_id(sec, start, end)
+    duration = (dt.date.fromisoformat(end) - dt.date.fromisoformat(start)).days + 1
     conn.execute("""
-    INSERT INTO canonical_facts(security_id, metric_id, value, period_start_date, period_end_date,
-                                available_at, accession_number, taxonomy, tag, unit, quality_flags, fact_hash, inserted_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-    """, (sec, metric, value, '2023-01-01', end, now, f'acc-{sec}-{metric}-{end}', 'test', 'test', 'USD', f'{sec}-{metric}-{end}', now))
-for sec, a, b in [(1,100,125),(2,100,90)]:
-    ins(sec, 1, a, '2023-03-31')
-    ins(sec, 1, b, '2023-06-30')
-    ins(sec, 2, a/10, '2023-03-31')
-    ins(sec, 2, b/10, '2023-06-30')
+    INSERT OR IGNORE INTO reporting_periods(
+      period_id, cik, accession_number, raw_start_date, raw_end_date, raw_instant_date,
+      start_date_inclusive, end_date_exclusive, duration_days, period_kind, period_semantics,
+      fiscal_year, fiscal_period, fiscal_period_ordinal, period_length_class, source, created_at
+    ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'duration', 'fiscal_quarter', 2023, 'Q1', 1, '13w', 'synthetic', ?)
+    """, (pid, str(sec).zfill(10), f'acc-{sec}-{end}', start, end, start, (dt.date.fromisoformat(end)+dt.timedelta(days=1)).isoformat(), duration, now))
+    return pid, duration
+
+def basis_for(metric):
+    return {
+        1: fa.BASIS_REVENUE_EXCLUDING_TAX,
+        2: fa.BASIS_NET_INCOME,
+        3: fa.BASIS_EPS_DILUTED,
+        4: fa.BASIS_DILUTED_SHARES,
+        5: fa.BASIS_OPERATING_CASH_FLOW,
+        6: fa.BASIS_CAPEX,
+        7: fa.BASIS_CASH,
+        8: fa.BASIS_DEBT,
+    }[metric]
+
+def metric_kind_for(metric):
+    if metric == 3:
+        return 'per_share_flow'
+    if metric in (7, 8):
+        return 'instant'
+    return 'flow'
+
+def unit_for(metric):
+    if metric == 3:
+        return 'USD/shares'
+    if metric == 4:
+        return 'shares'
+    return 'USD'
+
+def ins(sec, metric, value, start, end):
+    pid, duration = ins_period(sec, start, end)
+    obs = fa.stable_id('obs', {'sec': sec, 'metric': metric, 'end': end})
+    conn.execute("""
+    INSERT INTO canonical_observations(
+      observation_id, observation_hash, resolver_version, security_id, cik, metric_id, metric_name, metric_kind,
+      basis_id, period_id, period_semantics, duration_days, fiscal_year, fiscal_period, value_decimal,
+      unit_signature, dimensions_hash, dimensional_scope, observation_status, source_fact_id, source_accession,
+      taxonomy, concept_qname, selection_reason, quality_flags, quality_flags_json, quality_score,
+      accepted_at, available_at, created_at
+    ) VALUES (?, ?, 'synthetic_resolver', ?, ?, ?, ?, ?, ?, ?, 'fiscal_quarter', ?, 2023, 'Q1', ?,
+              ?, ?, 'consolidated_total', 'selected', NULL, ?, 'test', 'test', 'synthetic', 0, '[]', 1.0,
+              NULL, ?, ?)
+    """, (obs, obs.split('-',1)[1], sec, str(sec).zfill(10), metric, fa.METRIC_NAMES[metric],
+          metric_kind_for(metric), basis_for(metric), pid, duration, value, unit_for(metric),
+          fa.TOTAL_DIMENSIONS_HASH, f'acc-{sec}-{metric}-{end}', now, now))
+
+def ins_instant(sec, metric, value, date):
+    pid = fa.stable_id('period', {'sec': sec, 'instant': date})
+    conn.execute("""
+    INSERT OR IGNORE INTO reporting_periods(
+      period_id, cik, accession_number, raw_start_date, raw_end_date, raw_instant_date,
+      start_date_inclusive, end_date_exclusive, duration_days, period_kind, period_semantics,
+      fiscal_year, fiscal_period, fiscal_period_ordinal, period_length_class, source, created_at
+    ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, 0, 'instant', 'instant', 2023, 'Q4', 4, 'instant', 'synthetic', ?)
+    """, (pid, str(sec).zfill(10), f'acc-{sec}-{date}', date, date, date, now))
+    obs = fa.stable_id('obs', {'sec': sec, 'metric': metric, 'instant': date})
+    conn.execute("""
+    INSERT INTO canonical_observations(
+      observation_id, observation_hash, resolver_version, security_id, cik, metric_id, metric_name, metric_kind,
+      basis_id, period_id, period_semantics, duration_days, fiscal_year, fiscal_period, value_decimal,
+      unit_signature, dimensions_hash, dimensional_scope, observation_status, source_fact_id, source_accession,
+      taxonomy, concept_qname, selection_reason, quality_flags, quality_flags_json, quality_score,
+      accepted_at, available_at, created_at
+    ) VALUES (?, ?, 'synthetic_resolver', ?, ?, ?, ?, 'instant', ?, ?, 'instant', 0, 2023, 'Q4', ?,
+              'USD', ?, 'consolidated_total', 'selected', NULL, ?, 'test', 'test', 'synthetic', 0, '[]', 1.0,
+              NULL, ?, ?)
+    """, (obs, obs.split('-',1)[1], sec, str(sec).zfill(10), metric, fa.METRIC_NAMES[metric],
+          basis_for(metric), pid, value, fa.TOTAL_DIMENSIONS_HASH, f'acc-{sec}-{metric}-{date}', now, now))
+
+quarters = [
+    ('2022-07-01', '2022-09-30'),
+    ('2022-10-01', '2022-12-31'),
+    ('2023-01-01', '2023-03-31'),
+    ('2023-04-01', '2023-06-30'),
+    ('2023-07-01', '2023-09-30'),
+]
+for sec, revenues in [(1, [90, 95, 100, 115, 125]), (2, [110, 105, 100, 95, 90])]:
+    for idx, (start, end) in enumerate(quarters):
+        revenue = revenues[idx]
+        ins(sec, 1, revenue, start, end)
+        ins(sec, 2, revenue / 10, start, end)
+        ins(sec, 3, revenue / 100, start, end)
+        ins(sec, 4, 20, start, end)
+        ins(sec, 5, revenue * 0.18, start, end)
+        ins(sec, 6, revenue * 0.04, start, end)
+    ins_instant(sec, 7, 50, '2023-09-30')
+    ins_instant(sec, 8, 10, '2023-09-30')
 conn.commit()
 conn.close()
 
 run(['broker-reconcile', '--db', db, '--portfolio-value-usd', '100000', '--cash-usd', '100000', '--reconciled', '1'])
 run(['model-run', '--db', db, '--core-lib', lib, '--portfolio-value-usd', '100000', '--cash-usd', '100000', '--max-name-weight-ratio', '0.10', '--target-gross-exposure-ratio', '0.50'])
+run(['model-run-v2', '--db', db, '--core-lib', lib, '--portfolio-value-usd', '100000', '--cash-usd', '100000', '--max-name-weight-ratio', '0.10', '--target-gross-exposure-ratio', '0.50'])
 run(['risk-check', '--db', db, '--core-lib', lib, '--portfolio-value-usd', '100000', '--cash-usd', '100000', '--max-name-weight-ratio', '0.10', '--max-order-notional-usd', '20000'])
 conn = sqlite3.connect(db)
 approved = conn.execute('select count(*) from risk_decisions where approved=1').fetchone()[0]

@@ -90,3 +90,29 @@ FA-MODEL-002   | code review + checks    | core has no IO imports/calls
 FA-MODEL-003   | header inspection       | include/fa_core.h
 FA-MODEL-004   | ABI inspection          | fa_order_intent_v1 only
 ```
+
+## Accounting observation requirements
+
+FA-DATA-010
+: The system shall store raw source documents before any parsing or canonicalization.
+
+FA-DATA-011
+: The system shall store raw XBRL/companyfacts facts with concept, unit, period, context, accession, value, and source document lineage before resolving internal metrics.
+
+FA-DATA-012
+: The system shall represent reporting periods explicitly with period kind, period semantics, duration in days, fiscal year, fiscal period, and raw SEC dates.
+
+FA-DATA-013
+: The system shall represent canonical observations as versioned derived interpretations of raw facts, not as the source of truth.
+
+FA-DATA-014
+: The system shall preserve measurement basis, unit signature, and dimensional scope for every canonical observation.
+
+FA-MODEL-010
+: The C++ model kernel shall not compare flow metrics unless their period semantics, duration class, measurement basis, unit, and dimensional scope are compatible.
+
+FA-MODEL-011
+: The C++ model kernel shall reject ambiguous canonical observations as model-comparable inputs.
+
+FA-DATA-015
+: Any observation derived by arithmetic, including YTD subtraction, shall carry lineage to its parent observations and a quality flag identifying the derivation.

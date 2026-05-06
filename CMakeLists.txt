@@ -22,3 +22,12 @@ target_compile_options(fa_core_test PRIVATE
     -fno-exceptions -fno-rtti
 )
 add_test(NAME fa_core_test COMMAND fa_core_test)
+
+add_executable(fa_valuation_test tests/test_valuation.cpp)
+target_include_directories(fa_valuation_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(fa_valuation_test PRIVATE fa_core)
+target_compile_options(fa_valuation_test PRIVATE
+    -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror
+    -fno-exceptions -fno-rtti
+)
+add_test(NAME fa_valuation_test COMMAND fa_valuation_test)

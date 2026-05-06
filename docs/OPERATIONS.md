@@ -37,17 +37,18 @@ bin/fa sec-fetch --db /var/lib/fa/fa.db \
   --user-agent "Your Company admin@example.com"
 ```
 
-## 5. Company facts import
+## 5. XBRL package parsing
 
 ```sh
-bin/fa facts-companyfacts --db /var/lib/fa/fa.db \
+bin/fa xbrl-parse --db /var/lib/fa/fa.db \
+  --accession 0000320193-24-000123 \
   --cik 0000320193 \
   --symbol AAPL \
   --raw-root /var/lib/fa/raw \
   --user-agent "Your Company admin@example.com"
 ```
 
-This importer is a conservative starter. Before live operation, add a full accession-aware XBRL package parser and canonicalization review process.
+The parser downloads the SEC accession `index.json`, stores XBRL-relevant package artifacts unchanged, parses inline-XBRL and classic-XBRL contexts, units, dimensions, and raw facts, then invokes the canonical observation resolver. The `facts-companyfacts` command remains available as a fallback/reconciliation source, not as the primary production ingestion path.
 
 ## 6. Reconciliation snapshot
 

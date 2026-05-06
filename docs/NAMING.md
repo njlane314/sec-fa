@@ -111,10 +111,28 @@ Use lower-kebab-case:
 fa-sec-watch
 fa-sec-fetch
 fa-facts-companyfacts
+fa-xbrl-parse
 fa-model-run
+fa-model-run-v2
 fa-risk-check
 fa-order-stage
 fa-broker-submit
 fa-broker-reconcile
 fa-report
 ```
+
+## Observation naming
+
+Use `*_observation` for a versioned interpretation of one or more raw facts. Use `*_fact` only for lossless source-level data.
+
+Required suffixes:
+
+```text
+*_basis_id          measurement definition, not merely concept name
+*_period_semantics  fiscal_quarter, fiscal_ytd, fiscal_year, instant, etc.
+*_duration_days     inclusive reporting-period length
+*_dimensions_hash   stable signature of XBRL dimensions
+*_scope             consolidated_total, segment, product, geography, etc.
+```
+
+Avoid generic accessors such as `get_revenue`. Prefer names that encode semantics, for example `load_revenue_fiscal_quarter_observations` or `derive_quarter_from_ytd`.

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
+            xmlns:iso4217="http://www.xbrl.org/2003/iso4217"
+            xmlns:us-gaap="http://fasb.org/us-gaap/2024"
+            xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
+            xmlns:srt="http://fasb.org/srt/2024">
+  <xbrli:context id="I2024Q1xml">
+    <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000000003</xbrli:identifier></xbrli:entity>
+    <xbrli:period><xbrli:instant>2024-03-31</xbrli:instant></xbrli:period>
+  </xbrli:context>
+  <xbrli:context id="DProduct2024Q1">
+    <xbrli:entity>
+      <xbrli:identifier scheme="http://www.sec.gov/CIK">0000000003</xbrli:identifier>
+      <xbrli:segment><xbrldi:explicitMember dimension="srt:ProductOrServiceAxis">srt:ProductMember</xbrldi:explicitMember></xbrli:segment>
+    </xbrli:entity>
+    <xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-03-31</xbrli:endDate></xbrli:period>
+  </xbrli:context>
+  <xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>
+  <us-gaap:CashAndCashEquivalentsAtCarryingValue contextRef="I2024Q1xml" unitRef="usd" decimals="-6">42000000</us-gaap:CashAndCashEquivalentsAtCarryingValue>
+  <us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax contextRef="DProduct2024Q1" unitRef="usd" decimals="-6">1000000</us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax>
+</xbrli:xbrl>

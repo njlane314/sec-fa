@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "xbrl_fact.v1",
+  "type": "object",
+  "required": [
+    "fact_id",
+    "security_id",
+    "cik",
+    "taxonomy",
+    "concept_qname",
+    "context_id",
+    "unit_id",
+    "raw_fact_hash",
+    "available_at"
+  ],
+  "properties": {
+    "fact_id": {"type": "string"},
+    "source_doc_id": {"type": ["string", "null"]},
+    "security_id": {"type": "integer"},
+    "cik": {"type": "string"},
+    "accession_number": {"type": ["string", "null"]},
+    "taxonomy": {"type": "string"},
+    "concept_qname": {"type": "string"},
+    "context_id": {"type": "string"},
+    "unit_id": {"type": ["string", "null"]},
+    "value_decimal": {"type": ["number", "null"]},
+    "value_text": {"type": ["string", "null"]},
+    "raw_fact_hash": {"type": "string"},
+    "raw_context_id": {"type": "string"},
+    "form": {"type": ["string", "null"]},
+    "available_at": {"type": "string"}
+  }
+}

@@ -21,6 +21,12 @@ fa_canonical_fact_v1 fact(uint64_t security_id, int32_t metric_id, double value,
     f.period_end_day = end_day;
     f.available_at_epoch_s = 1700000000 + end_day;
     f.quality_flags = FA_QUALITY_NONE;
+    f.metric_kind = FA_METRIC_KIND_FLOW;
+    f.period_semantics = FA_PERIOD_FISCAL_QUARTER;
+    f.basis_id = metric_id == FA_METRIC_REVENUE ? FA_BASIS_REVENUE_CUSTOMER_CONTRACT_EXCLUDING_TAX : FA_BASIS_NET_INCOME_STANDARD;
+    f.observation_status = FA_OBSERVATION_SELECTED;
+    f.duration_days = 91u;
+    f.dimensions_hash = 0x44136fa355b3678au;
     return f;
 }
 

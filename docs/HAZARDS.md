@@ -118,3 +118,35 @@ no LLM/MCP authority in this repository
 future MCP tools must be read-only first
 broker credentials are not exposed to assistant interfaces
 ```
+
+## Accounting-period hazards
+
+hazard: YTD revenue consumed as quarterly revenue
+: control: period semantics and duration are part of canonical observation identity; the C++ ABI carries `period_semantics` and `duration_days`; model fact selection accepts only fiscal-quarter flow observations with quarter-like duration.
+
+hazard: concept switch creates false growth signal
+: control: canonical observations carry `basis_id`; the C++ kernel compares only observations with the same basis.
+
+hazard: segment/product/geography revenue consumed as consolidated revenue
+: control: observations carry `dimensions_hash` and `dimensional_scope`; model input loading selects consolidated-total observations and the C++ kernel compares only matching dimension signatures.
+
+hazard: derived quarter created from incompatible YTD facts
+: control: YTD subtraction is allowed only when metric, basis, unit, dimensions, fiscal year, and fiscal-year start are compatible; lineage is written for both operands.
+
+## XBRL parser hazards
+
+### Malformed inline-XBRL document produces partial facts
+
+Controls:
+
+- Raw source documents are stored before parsing.
+- Parser warnings are included in `xbrl_package_parsed` events.
+- `--strict` mode fails closed on parser warnings/errors.
+
+### Segment revenue contaminates consolidated revenue
+
+Controls:
+
+- Context dimensions are hashed and classified before fact insertion.
+- Canonical resolution rejects non-`consolidated_total` facts by default.
+- CI includes a dimensional product-revenue fixture that is stored as a raw fact but not selected canonically.

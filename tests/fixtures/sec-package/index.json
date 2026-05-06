@@ -1,0 +1,8 @@
+{
+  "directory": {
+    "item": [
+      {"name": "sample-20240331.htm", "type": "text/html", "size": "2500"},
+      {"name": "sample-20240331.xml", "type": "text/xml", "size": "2500"}
+    ]
+  }
+}

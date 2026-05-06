@@ -7,7 +7,7 @@ This repository defaults to non-live operation. A live deployment must pass thes
 ```text
 raw SEC artefacts are stored immutably
 canonical fact rules are reviewed
-companyfacts importer is replaced or supplemented by accession-aware XBRL parsing
+accession-aware XBRL parsing is reviewed against real 10-K/10-Q packages across the investable universe
 security master includes CIK, ticker, exchange, currency, share class, listing status, and IBKR contract id
 corporate-action handling is implemented
 ```
