@@ -1,0 +1,72 @@
+#!/usr/bin/env sh
+set -eu
+
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo >/dev/null
+cmake --build build --parallel >/dev/null
+ctest --test-dir build --output-on-failure
+python3 -m py_compile tools/fa_cli.py
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+DB="$TMPDIR/fa.db"
+LIB="build/libfa_core.so"
+[ -f "$LIB" ] || LIB="build/libfa_core.dylib"
+
+python3 - "$DB" "$LIB" <<'PY'
+import datetime as dt
+import importlib.util
+import sqlite3
+import sys
+from pathlib import Path
+
+repo = Path.cwd()
+spec = importlib.util.spec_from_file_location('fa_cli', repo / 'tools' / 'fa_cli.py')
+fa = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fa)
+
+db, lib = sys.argv[1], sys.argv[2]
+
+def run(args):
+    rc = fa.main(args)
+    if rc != 0:
+        raise SystemExit(f"command failed rc={rc}: {args}")
+
+run(['init-db', '--db', db])
+run(['security-upsert', '--db', db, '--cik', '0000000001', '--symbol', 'AAA', '--price-usd', '100', '--adv-usd', '10000000', '--investable', '1'])
+run(['security-upsert', '--db', db, '--cik', '0000000002', '--symbol', 'BBB', '--price-usd', '100', '--adv-usd', '10000000', '--investable', '1'])
+run(['position-upsert', '--db', db, '--cik', '0000000001', '--quantity-shares', '0', '--market-value-usd', '0', '--weight-ratio', '0'])
+
+conn = sqlite3.connect(db)
+now = dt.datetime.now(dt.UTC).isoformat(timespec='seconds').replace('+00:00','Z')
+def ins(sec, metric, value, end):
+    conn.execute("""
+    INSERT INTO canonical_facts(security_id, metric_id, value, period_start_date, period_end_date,
+                                available_at, accession_number, taxonomy, tag, unit, quality_flags, fact_hash, inserted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    """, (sec, metric, value, '2023-01-01', end, now, f'acc-{sec}-{metric}-{end}', 'test', 'test', 'USD', f'{sec}-{metric}-{end}', now))
+for sec, a, b in [(1,100,125),(2,100,90)]:
+    ins(sec, 1, a, '2023-03-31')
+    ins(sec, 1, b, '2023-06-30')
+    ins(sec, 2, a/10, '2023-03-31')
+    ins(sec, 2, b/10, '2023-06-30')
+conn.commit()
+conn.close()
+
+run(['broker-reconcile', '--db', db, '--portfolio-value-usd', '100000', '--cash-usd', '100000', '--reconciled', '1'])
+run(['model-run', '--db', db, '--core-lib', lib, '--portfolio-value-usd', '100000', '--cash-usd', '100000', '--max-name-weight-ratio', '0.10', '--target-gross-exposure-ratio', '0.50'])
+run(['risk-check', '--db', db, '--core-lib', lib, '--portfolio-value-usd', '100000', '--cash-usd', '100000', '--max-name-weight-ratio', '0.10', '--max-order-notional-usd', '20000'])
+conn = sqlite3.connect(db)
+approved = conn.execute('select count(*) from risk_decisions where approved=1').fetchone()[0]
+assert approved >= 1, approved
+conn.execute("update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1")
+conn.execute("delete from risk_decisions")
+conn.commit()
+conn.close()
+run(['risk-check', '--db', db, '--core-lib', lib, '--portfolio-value-usd', '100000', '--cash-usd', '100000', '--max-name-weight-ratio', '0.10', '--max-order-notional-usd', '20000'])
+conn = sqlite3.connect(db)
+approved = conn.execute('select count(*) from risk_decisions where approved=1').fetchone()[0]
+assert approved == 0, approved
+conn.close()
+PY
+
+echo "check ok"

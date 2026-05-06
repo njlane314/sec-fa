@@ -1,0 +1,8 @@
+build/
+*.db
+*.db-shm
+*.db-wal
+raw/
+__pycache__/
+*.pyc
+.DS_Store

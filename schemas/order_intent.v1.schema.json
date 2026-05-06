@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "order_intent.v1",
+  "type": "object",
+  "required": ["intent_id", "run_id", "security_id", "side", "notional_usd", "target_weight_ratio"],
+  "properties": {
+    "intent_id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "security_id": {"type": "integer"},
+    "side": {"enum": ["buy", "sell", "none"]},
+    "notional_usd": {"type": "number"},
+    "current_weight_ratio": {"type": "number"},
+    "target_weight_ratio": {"type": "number"},
+    "reason": {"type": "string"}
+  }
+}

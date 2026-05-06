@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "risk_decision.v1",
+  "type": "object",
+  "required": ["decision_id", "intent_id", "security_id", "approved", "reason"],
+  "properties": {
+    "decision_id": {"type": "string"},
+    "intent_id": {"type": "string"},
+    "security_id": {"type": "integer"},
+    "approved": {"type": "boolean"},
+    "reason": {"type": "string"},
+    "notional_usd": {"type": "number"}
+  }
+}
