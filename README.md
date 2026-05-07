@@ -7,23 +7,33 @@ SEC ingestion, canonical fact construction, deterministic model execution, portf
 
 ## System architecture
 
-```mermaid
-flowchart TB
-    source["SEC / market data"] --> ingest["ingestion services"]
-    ingest --> raw["raw immutable object store"]
-    ingest --> parser["parser / normalizer"]
-    raw --> store["SQLite canonical store"]
-    parser --> store
-    parser --> features["feature builder"]
-    store --> model["C++ modelling / portfolio library"]
-    features --> model
-    features --> intents["order-intent engine"]
-    model --> gate["risk gate"]
-    intents --> gate
-    gate --> ibkr["IBKR adapter"]
-    intents --> alerts["alerts / UI / MCP"]
-    gate --> ledger["audit ledger"]
-    ibkr --> recon["broker reconciliation"]
+```text
+SEC / market data
+        |
+        v
++--------------------+     +----------------------------+
+| ingestion services | --> | raw immutable object store |
++--------------------+     +----------------------------+
+        |                               |
+        v                               v
++---------------------+     +------------------------+
+| parser / normalizer | --> | SQLite canonical store |
++---------------------+     +------------------------+
+        |                               |
+        v                               v
++-----------------+         +-----------------------------------+
+| feature builder | ------> | C++ modelling / portfolio library |
++-----------------+         +-----------------------------------+
+        |                               |
+        v                               v
++---------------------+     +-----------+     +--------------+
+| order-intent engine | --> | risk gate | --> | IBKR adapter |
++---------------------+     +-----------+     +--------------+
+        |                         |                   |
+        v                         v                   v
++---------------+        +--------------+     +-----------------------+
+| alerts/UI/MCP |        | audit ledger |     | broker reconciliation |
++---------------+        +--------------+     +-----------------------+
 ```
 
 ## Non-negotiable design choices
@@ -111,24 +121,35 @@ halt
 
 The programs compose through the database, immutable raw store, and append-only ledger rather than through textual stdin/stdout filters. A normal operator sequence is:
 
-```mermaid
-flowchart TB
-    init["init"] --> sym["sym"]
-    init --> pos["pos"]
+```text
++------+
+| init |
++------+
+   |
+   +--> sym
+   |
+   +--> pos
 
-    watch["watch"] --> pull["pull"]
-    pull --> xbrl["xbrl"]
-    xbrl --> univ["univ"]
-
-    univ --> run["plan or value"]
-    recon_in["recon"] --> run
-
-    run --> gate["gate"]
-    gate --> stage["stage"]
-    stage --> send["send"]
-    send --> recon_out["recon"]
-    recon_out --> report["report"]
-    recon_out --> ping["ping"]
+watch -> pull -> xbrl -> univ
+                           |
+recon ---------------------+
+                           v
+                    plan or value
+                           |
+                           v
+                         gate
+                           |
+                           v
+                         stage
+                           |
+                           v
+                         send
+                           |
+                           v
+                         recon
+                        /     \
+                       v       v
+                    report   ping
 ```
 
 `comp` is reserved for a future companyfacts fallback/reconciliation importer. `value` runs the newer valuation path.
