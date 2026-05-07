@@ -2,32 +2,32 @@
 set -eu
 
 # Mock execution template. It assumes the database already contains securities,
-# observations, a universe, and model/risk output. It submits only to the guarded
+# observations, a universe, and model/risk output. It sends only to the guarded
 # mock adapter.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BIN="$ROOT/bin"
 
-: "${DB:=$ROOT/.folio.db}"
+: "${DB:=$ROOT/.sec.db}"
 : "${PORTFOLIO_VALUE_USD:=100000}"
 : "${CASH_USD:=100000}"
 
 LIB=${LIB:-$ROOT/build/libfolio.so}
 [ -f "$LIB" ] || LIB="$ROOT/build/libfolio.dylib"
 
-"$BIN/reconcile" \
+"$BIN/recon" \
   --db "$DB" \
   --portfolio-value-usd "$PORTFOLIO_VALUE_USD" \
   --cash-usd "$CASH_USD" \
   --reconciled 1
 
-"$BIN/model" \
+"$BIN/plan" \
   --db "$DB" \
   --core-lib "$LIB" \
   --portfolio-value-usd "$PORTFOLIO_VALUE_USD" \
   --cash-usd "$CASH_USD"
 
-"$BIN/risk" --db "$DB" --core-lib "$LIB"
+"$BIN/gate" --db "$DB" --core-lib "$LIB"
 "$BIN/stage" --db "$DB"
-"$BIN/submit" --db "$DB" --adapter mock
+"$BIN/send" --db "$DB" --adapter mock
 "$BIN/report" daily --db "$DB"

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "order_intent.v1",
+  "$id": "intent.v1",
   "type": "object",
   "required": ["intent_id", "run_id", "security_id", "side", "notional_usd", "target_weight_ratio"],
   "properties": {

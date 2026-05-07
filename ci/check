@@ -4,25 +4,23 @@ set -eu
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo >/dev/null
 cmake --build build --parallel >/dev/null
 ctest --test-dir build --output-on-failure
-python3 -m py_compile tools/folio.py
+python3 -m py_compile sec/cli.py
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
-DB="$TMPDIR/folio.db"
+DB="$TMPDIR/sec.db"
 LIB="build/libfolio.so"
 [ -f "$LIB" ] || LIB="build/libfolio.dylib"
 
 python3 - "$DB" "$LIB" <<'PY'
 import datetime as dt
-import importlib.util
 import sqlite3
 import sys
 from pathlib import Path
 
 repo = Path.cwd()
-spec = importlib.util.spec_from_file_location('folio', repo / 'tools' / 'folio.py')
-cli = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(cli)
+sys.path.insert(0, str(repo))
+from sec import cli
 
 db, lib = sys.argv[1], sys.argv[2]
 

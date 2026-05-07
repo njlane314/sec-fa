@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "xbrl_fact.v1",
+  "$id": "xbrl.v1",
   "type": "object",
   "required": [
     "fact_id",

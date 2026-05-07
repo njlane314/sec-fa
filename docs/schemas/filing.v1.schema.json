@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "filing_seen.v1",
+  "$id": "filing.v1",
   "type": "object",
   "required": ["event_type", "event_version", "event_id", "occurred_at", "payload"],
   "properties": {

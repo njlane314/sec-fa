@@ -2,7 +2,7 @@
 
 ## 1. C ABI
 
-The public C ABI is `include/fa_core.h`. All public structs include `abi_version` and all functions return explicit status codes.
+The public C ABI is `include/core.h`. All public structs include `abi_version` and all functions return explicit status codes.
 
 The model function consumes:
 
@@ -54,7 +54,7 @@ Events are JSON payloads stored in the `events` table. They are append-only evid
 }
 ```
 
-Schema files live in `schemas/`.
+Schema files live in `docs/schemas/`.
 
 ## 3. Command interface
 
@@ -70,7 +70,7 @@ Commands that mutate state have names that expose the side effect: `upsert`, `fe
 
 ## 4. Database interface
 
-SQLite is implemented for local/single-node operation. PostgreSQL DDL is provided for production migration. Do not treat SQLite as a broker-host coordination mechanism for a multi-node live deployment.
+SQLite is the single implemented database interface for local/single-node operation. Do not treat it as a broker-host coordination mechanism for a multi-node live deployment.
 
 ## 5. Broker adapter replacement point
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "canonical_fact.v1.compatibility_projection",
+  "$id": "projection.v1",
   "type": "object",
-  "description": "Compatibility projection of canonical_observations for older model-input consumers. New code should use canonical_observation.v1.",
+  "description": "Compatibility projection of canonical_observations for older model-input consumers. New code should use observation.v1.",
   "required": ["security_id", "metric_id", "value", "period_end_date", "available_at"],
   "properties": {
     "security_id": {"type": "integer"},

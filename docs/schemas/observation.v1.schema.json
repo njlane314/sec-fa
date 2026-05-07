@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "canonical_observation.v1",
+  "$id": "observation.v1",
   "type": "object",
   "required": [
     "resolver_version",

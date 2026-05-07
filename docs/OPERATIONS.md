@@ -9,7 +9,7 @@ make check
 ## 2. Initialize database
 
 ```sh
-bin/bootstrap --db /var/lib/folio/folio.db
+bin/init --db /var/lib/sec/sec.db
 ```
 
 The initial mode is `observe`.
@@ -17,7 +17,7 @@ The initial mode is `observe`.
 ## 3. Add securities
 
 ```sh
-bin/security --db /var/lib/folio/folio.db \
+bin/sym --db /var/lib/sec/sec.db \
   --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
 ```
 
@@ -28,32 +28,32 @@ In the starter implementation, `security_id` is the integer CIK. A production se
 Declare a real User-Agent. The SEC fair-access guidance requires a declared User-Agent and rate moderation.
 
 ```sh
-bin/filings --db /var/lib/folio/folio.db \
+bin/watch --db /var/lib/sec/sec.db \
   --cik 0000320193 \
   --user-agent "Your Company admin@example.com"
 
-bin/archive --db /var/lib/folio/folio.db \
-  --raw-root /var/lib/folio/raw \
+bin/pull --db /var/lib/sec/sec.db \
+  --raw-root /var/lib/sec/raw \
   --user-agent "Your Company admin@example.com"
 ```
 
 ## 5. XBRL package parsing
 
 ```sh
-bin/xbrl --db /var/lib/folio/folio.db \
+bin/xbrl --db /var/lib/sec/sec.db \
   --accession 0000320193-24-000123 \
   --cik 0000320193 \
   --symbol AAPL \
-  --raw-root /var/lib/folio/raw \
+  --raw-root /var/lib/sec/raw \
   --user-agent "Your Company admin@example.com"
 ```
 
-The parser downloads the SEC accession `index.json`, stores XBRL-relevant package artifacts unchanged, parses inline-XBRL and classic-XBRL contexts, units, dimensions, and raw facts, then invokes the canonical observation resolver. The `company` command remains available as a fallback/reconciliation source, not as the primary production ingestion path.
+The parser downloads the SEC accession `index.json`, stores XBRL-relevant package artifacts unchanged, parses inline-XBRL and classic-XBRL contexts, units, dimensions, and raw facts, then invokes the canonical observation resolver. The `comp` command remains available as a fallback/reconciliation source, not as the primary production ingestion path.
 
 ## 6. Reconciliation snapshot
 
 ```sh
-bin/reconcile --db /var/lib/folio/folio.db \
+bin/recon --db /var/lib/sec/sec.db \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 \
   --reconciled 1
@@ -64,13 +64,13 @@ In production this command should be replaced or backed by an actual broker-stat
 ## 7. Model and risk
 
 ```sh
-bin/model --db /var/lib/folio/folio.db \
-  --core-lib /opt/folio/lib/libfolio.so \
+bin/plan --db /var/lib/sec/sec.db \
+  --core-lib /opt/sec/lib/libfolio.so \
   --portfolio-value-usd 100000 \
   --cash-usd 100000
 
-bin/risk --db /var/lib/folio/folio.db \
-  --core-lib /opt/folio/lib/libfolio.so
+bin/gate --db /var/lib/sec/sec.db \
+  --core-lib /opt/sec/lib/libfolio.so
 ```
 
 Risk decisions are append-only. Stale reconciliation rejects all intents.
@@ -78,20 +78,20 @@ Risk decisions are append-only. Stale reconciliation rejects all intents.
 ## 8. Staging and submission
 
 ```sh
-bin/stage --db /var/lib/folio/folio.db
+bin/stage --db /var/lib/sec/sec.db
 ```
 
 Live broker submission is intentionally not implemented. The current command supports only guarded mock submission:
 
 ```sh
-bin/submit --db /var/lib/folio/folio.db --adapter mock
+bin/send --db /var/lib/sec/sec.db --adapter mock
 ```
 
 ## 9. Reports
 
 ```sh
-bin/report daily --db /var/lib/folio/folio.db
-bin/status --db /var/lib/folio/folio.db
+bin/report daily --db /var/lib/sec/sec.db
+bin/stat --db /var/lib/sec/sec.db
 ```
 
 ## 10. Notifications
@@ -100,11 +100,11 @@ Pushover:
 
 ```sh
 PUSHOVER_TOKEN=... PUSHOVER_USER=... \
-  bin/notify --method pushover --title "Risk alert" --message "Risk gate rejected orders"
+  bin/ping --method pushover --title "Risk alert" --message "Risk gate rejected orders"
 ```
 
 ntfy:
 
 ```sh
-bin/notify --method ntfy --ntfy-topic your-secret-topic --message "New filing"
+bin/ping --method ntfy --ntfy-topic your-secret-topic --message "New filing"
 ```

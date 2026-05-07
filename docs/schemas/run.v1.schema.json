@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "model_run.v1",
+  "$id": "run.v1",
   "type": "object",
   "required": ["run_id", "occurred_at", "config", "diagnostics"],
   "properties": {

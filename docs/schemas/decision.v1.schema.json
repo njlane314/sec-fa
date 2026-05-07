@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "risk_decision.v1",
+  "$id": "decision.v1",
   "type": "object",
   "required": ["decision_id", "intent_id", "security_id", "approved", "reason"],
   "properties": {

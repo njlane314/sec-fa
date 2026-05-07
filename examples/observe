@@ -2,12 +2,12 @@
 set -eu
 
 # Observe-mode template. It initializes local state, ingests SEC data, runs the
-# model and risk gate, then reports. It does not stage or submit orders.
+# model and risk gate, then reports. It does not stage or send orders.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BIN="$ROOT/bin"
 
-: "${DB:=$ROOT/.folio.db}"
+: "${DB:=$ROOT/.sec.db}"
 : "${RAW:=$ROOT/raw}"
 : "${CIK:=0000320193}"
 : "${SYMBOL:=AAPL}"
@@ -20,9 +20,9 @@ BIN="$ROOT/bin"
 LIB=${LIB:-$ROOT/build/libfolio.so}
 [ -f "$LIB" ] || LIB="$ROOT/build/libfolio.dylib"
 
-"$BIN/bootstrap" --db "$DB"
+"$BIN/init" --db "$DB"
 
-"$BIN/security" \
+"$BIN/sym" \
   --db "$DB" \
   --cik "$CIK" \
   --symbol "$SYMBOL" \
@@ -30,19 +30,19 @@ LIB=${LIB:-$ROOT/build/libfolio.so}
   --adv-usd "$ADV_USD" \
   --investable 1
 
-"$BIN/position" \
+"$BIN/pos" \
   --db "$DB" \
   --cik "$CIK" \
   --quantity-shares 0 \
   --market-value-usd 0 \
   --weight-ratio 0
 
-"$BIN/filings" \
+"$BIN/watch" \
   --db "$DB" \
   --cik "$CIK" \
   --user-agent "$UA"
 
-"$BIN/archive" \
+"$BIN/pull" \
   --db "$DB" \
   --raw-root "$RAW" \
   --user-agent "$UA"
@@ -59,10 +59,10 @@ else
   printf '%s\n' 'ACCESSION is not set; skipping xbrl parse step.' >&2
 fi
 
-"$BIN/universe" --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
-"$BIN/reconcile" --db "$DB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD" --reconciled 1
-"$BIN/model" --db "$DB" --core-lib "$LIB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD"
+"$BIN/univ" --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
+"$BIN/recon" --db "$DB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD" --reconciled 1
+"$BIN/plan" --db "$DB" --core-lib "$LIB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD"
 "$BIN/value" --db "$DB" --core-lib "$LIB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD"
-"$BIN/risk" --db "$DB" --core-lib "$LIB"
+"$BIN/gate" --db "$DB" --core-lib "$LIB"
 "$BIN/report" daily --db "$DB"
-"$BIN/status" --db "$DB"
+"$BIN/stat" --db "$DB"

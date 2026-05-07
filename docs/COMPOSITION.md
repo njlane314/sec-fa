@@ -7,31 +7,31 @@ That distinction is intentional. A financial control system should not pass trad
 ## 1. Handoff model
 
 ```text
-bootstrap
+init
   │
-  ├── security
-  └── position
+  ├── sym
+  └── pos
 
-filings ──► archive ──► xbrl ──► universe
+watch ──► pull ──► xbrl ──► univ
                                   │
-reconcile ────────────────────────┤
+recon ─────────────────────────────┤
                                   ▼
-                           model or value
+                           plan or value
                                   ▼
-                                risk
+                                gate
                                   ▼
                                 stage
                                   ▼
-                               submit
+                                send
                                   ▼
-                         reconcile ──► report
-                                  └──► notify
+                           recon ──► report
+                                  └──► ping
 ```
 
 Each arrow is a state transition with an auditable record. The usual shared handles are:
 
 ```sh
-DB=.folio.db
+DB=.sec.db
 RAW=raw
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
@@ -43,46 +43,46 @@ UA="Your Name your.email@example.com"
 ## 2. Command roles
 
 ```text
-bootstrap   create the database and initial observe-mode state
-security    upsert issuer/security metadata
-position    upsert current internal position state
-filings     discover recent SEC filings
-archive     fetch immutable SEC filing artifacts
-company     import SEC companyfacts fallback data
-xbrl        parse an accession package and resolve observations
-universe    construct the investable/research universe
-reconcile   record external broker/cash truth
-model       run the baseline deterministic model
-value       run the valuation model path
-risk        convert intents into approved/rejected risk decisions
-stage       persist approved orders before execution
-submit      send staged orders to the selected adapter
-report      render state, decisions, and outcomes
-notify      send an operator notification
-status      summarize current operating state
-mode        change operating mode by explicit operator action
-halt        prevent future trading action
+init    create the database and initial observe-mode state
+sym     upsert issuer/security metadata
+pos     upsert current internal position state
+watch   discover recent SEC filings
+pull    fetch immutable SEC filing artifacts
+comp    import SEC companyfacts fallback data
+xbrl    parse an accession package and resolve observations
+univ    construct the investable/research universe
+recon   record external broker/cash truth
+plan    run the baseline deterministic model
+value   run the valuation model path
+gate    convert intents into approved/rejected risk decisions
+stage   persist approved orders before execution
+send    send staged orders to the selected adapter
+report  render state, decisions, and outcomes
+ping    send an operator notification
+stat    summarize current operating state
+mode    change operating mode by explicit operator action
+halt    prevent future trading action
 ```
 
 The normal verb direction is left to right:
 
 ```text
-discover -> fetch -> parse -> build -> reconcile -> model -> check -> stage -> submit -> reconcile -> report
+discover -> fetch -> parse -> build -> recon -> plan -> gate -> stage -> send -> recon -> report
 ```
 
 ## 3. Initialize and seed one issuer
 
 ```sh
-DB=.folio.db
+DB=.sec.db
 
-bin/bootstrap --db "$DB" &&
-bin/security --db "$DB" \
+bin/init --db "$DB" &&
+bin/sym --db "$DB" \
   --cik 0000320193 \
   --symbol AAPL \
   --price-usd 200 \
   --adv-usd 5000000000 \
   --investable 1 &&
-bin/position --db "$DB" \
+bin/pos --db "$DB" \
   --cik 0000320193 \
   --quantity-shares 0 \
   --market-value-usd 0 \
@@ -94,14 +94,14 @@ This is analogous to creating a working tree before using `git`: later commands 
 ## 4. Ingest one issuer
 
 ```sh
-DB=.folio.db
+DB=.sec.db
 RAW=raw
 UA="Your Name your.email@example.com"
 
-bin/filings --db "$DB" \
+bin/watch --db "$DB" \
   --cik 0000320193 \
   --user-agent "$UA" &&
-bin/archive --db "$DB" \
+bin/pull --db "$DB" \
   --raw-root "$RAW" \
   --user-agent "$UA" &&
 bin/xbrl --db "$DB" \
@@ -112,37 +112,37 @@ bin/xbrl --db "$DB" \
   --user-agent "$UA"
 ```
 
-`filings` discovers filing metadata. `archive` fetches the raw artifacts. `xbrl` turns one accession package into raw facts, periods, dimensions, and canonical observations.
+`watch` discovers filing metadata. `pull` fetches the raw artifacts. `xbrl` turns one accession package into raw facts, periods, dimensions, and canonical observations.
 
 ## 5. Ingest several issuers, then build one universe
 
 ```sh
-DB=.folio.db
+DB=.sec.db
 RAW=raw
 UA="Your Name your.email@example.com"
 
 for cik in 0000320193 0000789019 0001652044; do
-  bin/filings --db "$DB" --cik "$cik" --user-agent "$UA"
+  bin/watch --db "$DB" --cik "$cik" --user-agent "$UA"
 done
 
-bin/archive --db "$DB" --raw-root "$RAW" --user-agent "$UA" &&
-bin/universe --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
+bin/pull --db "$DB" --raw-root "$RAW" --user-agent "$UA" &&
+bin/univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
 ```
 
-This is fan-in composition. Many `filings` calls feed one archive pass and one universe snapshot.
+This is fan-in composition. Many `watch` calls feed one pull pass and one universe snapshot.
 
 ## 6. Research-only run
 
 ```sh
-DB=.folio.db
+DB=.sec.db
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
 
-bin/reconcile --db "$DB" \
+bin/recon --db "$DB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 \
   --reconciled 1 &&
-bin/model --db "$DB" \
+bin/plan --db "$DB" \
   --core-lib "$LIB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 &&
@@ -150,29 +150,29 @@ bin/value --db "$DB" \
   --core-lib "$LIB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 &&
-bin/risk --db "$DB" \
+bin/gate --db "$DB" \
   --core-lib "$LIB" &&
 bin/report daily --db "$DB"
 ```
 
-This chain is safe for observe or research operation because it stops at risk decisions. It does not call `stage` or `submit`.
+This chain is safe for observe or research operation because it stops at risk decisions. It does not call `stage` or `send`.
 
 ## 7. Stage approved intents without broker submission
 
 ```sh
-DB=.folio.db
+DB=.sec.db
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
 
-bin/reconcile --db "$DB" \
+bin/recon --db "$DB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 \
   --reconciled 1 &&
-bin/model --db "$DB" \
+bin/plan --db "$DB" \
   --core-lib "$LIB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 &&
-bin/risk --db "$DB" \
+bin/gate --db "$DB" \
   --core-lib "$LIB" &&
 bin/stage --db "$DB" &&
 bin/report daily --db "$DB"
@@ -183,49 +183,49 @@ This is the shadow/paper boundary. `stage` consumes only approved risk decisions
 ## 8. Mock adapter submission
 
 ```sh
-DB=.folio.db
+DB=.sec.db
 
 bin/stage --db "$DB" &&
-bin/submit --db "$DB" --adapter mock &&
-bin/reconcile --db "$DB" \
+bin/send --db "$DB" --adapter mock &&
+bin/recon --db "$DB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 \
   --reconciled 1 &&
 bin/report daily --db "$DB"
 ```
 
-`submit` is the only public program that crosses the execution boundary. In the current implementation, `--adapter mock` is the guarded adapter.
+`send` is the only public program that crosses the execution boundary. In the current implementation, `--adapter mock` is the guarded adapter.
 
-## 9. Report and notify as fan-out
+## 9. Report and Notify as Fan-Out
 
 ```sh
-DB=.folio.db
+DB=.sec.db
 
 bin/report daily --db "$DB" &&
-bin/status --db "$DB" &&
-bin/notify \
+bin/stat --db "$DB" &&
+bin/ping \
   --method ntfy \
   --ntfy-topic your-secret-topic \
   --message "Daily run complete"
 ```
 
-This is fan-out from the ledger. `report`, `status`, and `notify` should not mutate trading decisions.
+This is fan-out from the ledger. `report`, `stat`, and `ping` should not mutate trading decisions.
 
 ## 10. Failure behavior
 
 Use `&&` when the next command must not run after a failed precondition:
 
 ```sh
-bin/reconcile --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
-bin/model --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
-bin/risk --db "$DB" --core-lib "$LIB" &&
+bin/recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
+bin/plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
+bin/gate --db "$DB" --core-lib "$LIB" &&
 bin/stage --db "$DB"
 ```
 
 Use `;` only when the commands are independent diagnostics:
 
 ```sh
-bin/status --db "$DB" ; bin/report daily --db "$DB"
+bin/stat --db "$DB" ; bin/report daily --db "$DB"
 ```
 
 That distinction is the command-line safety contract: gates are chained with `&&`, observability can fan out.

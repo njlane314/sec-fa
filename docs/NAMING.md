@@ -101,32 +101,34 @@ Types:             fa_name_v1 for ABI structs, PascalCase only inside private C+
 Functions:         lower_snake_case
 Variables:         lower_snake_case
 Constants/macros:  FA_UPPER_SNAKE_CASE
+Source files:      no project prefix; name files for the domain responsibility
 ```
 
 ## 4. Executables
 
-Use single lowercase words. Do not use the project name as a binary prefix, and do not make command names by hyphenating a sentence.
+Use short, single lowercase words. Prefer four or five characters when practical, and do not make command names by hyphenating a sentence.
 
 Use nouns for persisted objects, verbs for gates and side effects, and keep the normal operating sequence readable left to right:
 
 ```text
-bootstrap
-security
-position
-filings
-archive
-company
+sec
+init
+sym
+pos
+watch
+pull
+comp
 xbrl
-universe
-reconcile
-model
+univ
+recon
+plan
 value
-risk
+gate
 stage
-submit
+send
 report
-notify
-status
+ping
+stat
 mode
 halt
 ```
@@ -134,7 +136,7 @@ halt
 Prefer composition through the operational store over long command names. Example:
 
 ```text
-filings -> archive -> xbrl -> universe -> reconcile -> model -> risk -> stage -> submit -> report
+watch -> pull -> xbrl -> univ -> recon -> plan -> gate -> stage -> send -> report
 ```
 
 ## Observation naming
