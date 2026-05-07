@@ -31,7 +31,7 @@ recon ────────────────────────�
 Each arrow is a state transition with an auditable record. The usual shared handles are:
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 RAW=raw
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
@@ -72,9 +72,9 @@ discover -> fetch -> parse -> build -> recon -> plan -> gate -> stage -> send ->
 ## 3. Initialize and seed one issuer
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 
-./sec init --db "$DB" &&
+make setup-db &&
 ./sec sym --db "$DB" \
   --cik 0000320193 \
   --symbol AAPL \
@@ -93,7 +93,7 @@ This is analogous to creating a working tree before using `git`: later commands 
 ## 4. Ingest one issuer
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 RAW=raw
 UA="Your Name your.email@example.com"
 
@@ -116,7 +116,7 @@ UA="Your Name your.email@example.com"
 ## 5. Ingest several issuers, then build one universe
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 RAW=raw
 UA="Your Name your.email@example.com"
 
@@ -133,7 +133,7 @@ This is fan-in composition. Many `watch` calls feed one pull pass and one univer
 ## 6. Research-only run
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
 
@@ -159,7 +159,7 @@ This chain is safe for observe or research operation because it stops at risk de
 ## 7. Stage approved intents without broker submission
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
 
@@ -182,7 +182,7 @@ This is the shadow/paper boundary. `stage` consumes only approved risk decisions
 ## 8. Mock adapter submission
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 
 ./sec stage --db "$DB" &&
 ./sec send --db "$DB" --adapter mock &&
@@ -198,7 +198,7 @@ DB=.sec.db
 ## 9. Report and Notify as Fan-Out
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 
 ./sec report daily --db "$DB" &&
 ./sec stat --db "$DB" &&
