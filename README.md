@@ -112,10 +112,109 @@ halt
 The programs compose through the database, immutable raw store, and append-only ledger rather than through textual stdin/stdout filters. A normal operator sequence is:
 
 ```text
-filings -> archive -> xbrl -> universe -> reconcile -> model -> risk -> stage -> submit -> report
+bootstrap
+  │
+  ├── security
+  └── position
+
+filings ──► archive ──► xbrl ──► universe
+                                  │
+reconcile ────────────────────────┤
+                                  ▼
+                           model or value
+                                  ▼
+                                risk
+                                  ▼
+                                stage
+                                  ▼
+                               submit
+                                  ▼
+                         reconcile ──► report
+                                  └──► notify
 ```
 
 `company` remains a fallback/reconciliation importer for SEC companyfacts data. `value` runs the newer valuation path.
+
+## Composition examples
+
+Initialize and seed state:
+
+```sh
+DB=.folio.db
+
+bin/bootstrap --db "$DB" &&
+bin/security --db "$DB" \
+  --cik 0000320193 \
+  --symbol AAPL \
+  --price-usd 200 \
+  --adv-usd 5000000000 \
+  --investable 1 &&
+bin/position --db "$DB" \
+  --cik 0000320193 \
+  --quantity-shares 0 \
+  --market-value-usd 0 \
+  --weight-ratio 0
+```
+
+Ingest data and build a universe:
+
+```sh
+DB=.folio.db
+RAW=raw
+UA="Your Name your.email@example.com"
+
+bin/filings --db "$DB" --cik 0000320193 --user-agent "$UA" &&
+bin/archive --db "$DB" --raw-root "$RAW" --user-agent "$UA" &&
+bin/xbrl \
+  --db "$DB" \
+  --accession 0000320193-24-000123 \
+  --cik 0000320193 \
+  --symbol AAPL \
+  --raw-root "$RAW" \
+  --user-agent "$UA" &&
+bin/universe --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
+```
+
+Research-only run. This stops at risk decisions; it does not stage or submit orders:
+
+```sh
+DB=.folio.db
+LIB=build/libfolio.so
+[ -f "$LIB" ] || LIB=build/libfolio.dylib
+
+bin/reconcile --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
+bin/model --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
+bin/value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
+bin/risk --db "$DB" --core-lib "$LIB" &&
+bin/report daily --db "$DB"
+```
+
+Shadow/staging run. This crosses from decision to staged action but still does not talk to a broker adapter:
+
+```sh
+bin/reconcile --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
+bin/model --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
+bin/risk --db "$DB" --core-lib "$LIB" &&
+bin/stage --db "$DB" &&
+bin/report daily --db "$DB"
+```
+
+Guarded mock submission:
+
+```sh
+bin/stage --db "$DB" &&
+bin/submit --db "$DB" --adapter mock &&
+bin/reconcile --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
+bin/report daily --db "$DB"
+```
+
+The executable templates encode those patterns directly:
+
+```text
+examples/observe
+examples/shadow
+examples/mock
+```
 
 ## Repository map
 
