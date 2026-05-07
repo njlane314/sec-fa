@@ -21,60 +21,104 @@ step() {
   printf '==> %s\n' "$*" >&2
 }
 
+contains() {
+  file=$1
+  pattern=$2
+  grep -n -E "$pattern" "$file" >/dev/null 2>&1
+}
+
+require_contains() {
+  file=$1
+  pattern=$2
+  contains "$file" "$pattern" || fail "$file does not contain required pattern: $pattern"
+}
+
+forbid_contains() {
+  path=$1
+  pattern=$2
+  if grep -R -n -E "$pattern" "$path" >&2; then
+    fail "$path contains forbidden pattern: $pattern"
+  fi
+}
+
+need awk
 need cmake
 need ctest
 need go
 need gofmt
 need grep
+need nm
+need sed
 need sqlite3
 
 if [ "$(sqlite3 :memory: "select json_valid('{}');")" != "1" ]; then
   fail "sqlite3 was built without JSON1 support"
 fi
 
-step "checking Go formatting"
+step "static gate: formatting and source boundaries"
+sh -n "$0"
 gofmt_files=$(gofmt -l cli/*.go)
 if [ -n "$gofmt_files" ]; then
   printf '%s\n' "$gofmt_files" >&2
   fail "Go files need gofmt"
 fi
 
-step "checking C++ core boundaries"
-if grep -R -n -E '#[[:space:]]*include[[:space:]]*<([^>]*fstream|filesystem|thread|chrono|ctime|unistd.h|fcntl.h|sys/socket.h|curl|boost/asio)' engine abi >&2; then
-  fail "engine or ABI includes forbidden IO/time/network headers"
-fi
-if grep -R -n -E '\b(std::filesystem|std::ifstream|std::ofstream|std::fstream|fopen|freopen|open\(|close\(|read\(|write\(|socket\(|connect\(|accept\(|send\(|recv\(|getenv|system|popen|time\(|clock_gettime|std::chrono|std::time)\b' engine >&2; then
-  fail "engine contains forbidden IO/time/network calls"
-fi
-if grep -n -E '\bstd::|<[[:space:]]*(vector|string|array|span|map|unordered_map|optional|variant)[[:space:]]*>' abi/core.h >&2; then
-  fail "public ABI must not expose STL types"
-fi
+forbid_contains engine '#[[:space:]]*include[[:space:]]*<([^>]*fstream|filesystem|thread|chrono|ctime|unistd.h|fcntl.h|sys/socket.h|curl|boost/asio)'
+forbid_contains abi '#[[:space:]]*include[[:space:]]*<([^>]*fstream|filesystem|thread|chrono|ctime|unistd.h|fcntl.h|sys/socket.h|curl|boost/asio)'
+forbid_contains engine '\b(std::filesystem|std::ifstream|std::ofstream|std::fstream|fopen|freopen|open\(|close\(|read\(|write\(|socket\(|connect\(|accept\(|send\(|recv\(|getenv|system|popen|time\(|clock_gettime|std::chrono|std::time)\b'
+forbid_contains abi/core.h '\bstd::|<[[:space:]]*(vector|string|array|span|map|unordered_map|optional|variant)[[:space:]]*>'
 
-step "configuring C++ build"
+require_contains abi/core.h '^#define FA_ABI_VERSION 4u$'
+require_contains abi/core.h 'fa_build_statement_snapshots_v1'
+require_contains cli/value.go 'fa_build_statement_snapshots_v1'
+require_contains cli/value.go 'statement_builder_diagnostics'
+forbid_contains cli/value.go 'func[[:space:]]+(buildLatestStatements|buildStatement|latestFlowTTM|latestPoint)[[:space:]]*\('
+forbid_contains cli/value.go 'type[[:space:]]+metricPoint\b'
+require_contains cli/cmd.go 'requireFreshBrokerReconciliation'
+require_contains docs/CODE.md 'explicit Class B data logic'
+require_contains docs/REQS.md 'FA-MODEL-012'
+
+step "build gate: C++ core and tests"
 cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" >&2
-
-step "building C++ core and tests"
 cmake --build "$BUILD_DIR" --parallel >&2
-
-step "running C++ tests"
 ctest --test-dir "$BUILD_DIR" --output-on-failure >&2
 
-step "running Go tests and vet"
+LIB="$BUILD_DIR/libfolio.so"
+[ -f "$LIB" ] || LIB="$BUILD_DIR/libfolio.dylib"
+[ -f "$LIB" ] || fail "built core library not found in $BUILD_DIR"
+
+symbols_file="$BUILD_DIR/exported-symbols.txt"
+nm -g "$LIB" | awk '{print $NF}' | sed 's/^_//' | sort -u > "$symbols_file"
+for symbol in \
+  fa_status_name \
+  fa_build_portfolio_plan_v1 \
+  fa_plan_v1 \
+  fa_build_statement_snapshots_v1 \
+  fa_statement_build_output_free_v1 \
+  fa_build_valuation_plan_v1 \
+  fa_value_v1 \
+  fa_check_risk_limits_v1 \
+  fa_gate_v1; do
+  if ! grep -qx "$symbol" "$symbols_file"; then
+    fail "missing exported C ABI symbol: $symbol"
+  fi
+done
+
+step "build gate: Go tests, vet, and CLI binary"
 go test ./... >&2
 go vet ./... >&2
-
-step "building Go CLI"
 go build -o "$BUILD_DIR/sec" ./cli >&2
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 DB="$TMPDIR/sec.db"
-LIB="$BUILD_DIR/libfolio.so"
-[ -f "$LIB" ] || LIB="$BUILD_DIR/libfolio.dylib"
-[ -f "$LIB" ] || fail "built core library not found in $BUILD_DIR"
+
+sec() {
+  "$BUILD_DIR/sec" "$@"
+}
 
 run_quiet() {
-  "$BUILD_DIR/sec" "$@" >/dev/null
+  sec "$@" >/dev/null
 }
 
 expect_exit() {
@@ -125,7 +169,7 @@ no_rows() {
   fi
 }
 
-check_db() {
+check_event_log() {
   eq 'pragma integrity_check' ok
   no_rows 'pragma foreign_key_check'
   eq "select count(*) from events where event_version != 1 or event_id='' or occurred_at='' or payload_json='' or payload_sha256=''" 0
@@ -133,7 +177,44 @@ check_db() {
   eq "select count(*) from events where length(payload_sha256) != 64" 0
 }
 
-step "running CLI smoke path"
+check_data_authority() {
+  ge 'select count(*) from source_documents' 3
+  ge 'select count(*) from xbrl_contexts' 4
+  ge 'select count(*) from xbrl_units' 1
+  ge 'select count(*) from dimension_signatures' 2
+  eq "select count(*) from filings where accession_number='0000000003-24-000001' and cik='0000000003' and form='10-Q' and filing_date='2024-04-30' and accepted_at='2024-04-30T12:00:00Z'" 1
+  eq "select count(*) from xbrl_facts where accession_number='0000000003-24-000001'" 7
+  eq "select count(*) from xbrl_facts where fact_id='' or security_id is null or cik='' or taxonomy='' or concept_qname='' or context_id='' or raw_fact_hash='' or available_at=''" 0
+  eq "select count(*) from source_documents where length(sha256) != 64 or local_path='' or source_url=''" 0
+  eq "select count(*) from xbrl_facts where length(raw_fact_hash) != 64" 0
+  eq "select count(*) from canonical_observations where security_id=3" 3
+  eq "select count(*) from canonical_observations where security_id=3 and dimensional_scope!='consolidated_total'" 0
+  eq "select count(*) from canonical_observations where resolver_version='' or metric_name='' or metric_kind='' or basis_id is null or period_id='' or unit_signature='' or dimensions_hash='' or dimensional_scope='' or observation_status not in ('selected','derived','rejected','superseded') or available_at=''" 0
+  eq "select count(*) from canonical_observations where metric_kind in ('flow','per_share_flow') and duration_days <= 0" 0
+  eq "select count(*) from events where event_type='xbrl_package_parsed' and json_extract(payload_json, '$.raw_facts_inserted')=7 and json_extract(payload_json, '$.canonical_selected_inserted')=3" 1
+}
+
+check_model_outputs() {
+  eq "select count(*) from model_runs where run_id='' or diagnostics=''" 0
+  ge "select count(*) from model_runs where diagnostics like 'value_ok%'" 1
+  ge 'select count(*) from statement_snapshots' 1
+  eq "select count(*) from statement_snapshots where length(source_hash) != 64 or is_ttm != 1 or available_at='' or period_end_date=''" 0
+  ge "select count(*) from events where event_type='value_completed' and json_extract(payload_json, '$.statement_builder_diagnostics') like 'statements_ok%'" 1
+  eq "select count(*) from target_weights where run_id not in (select run_id from model_runs)" 0
+  eq "select count(*) from order_intents where intent_id='' or run_id='' or side not in ('buy','sell','none') or notional_usd is null or target_weight_ratio is null" 0
+  eq "select count(*) from order_intents where run_id not in (select run_id from model_runs)" 0
+  eq "select count(*) from valuations where run_id not in (select run_id from model_runs)" 0
+}
+
+check_risk_and_execution() {
+  eq "select count(*) from risk_decisions where decision_id='' or intent_id='' or reason=''" 0
+  eq "select count(*) from risk_decisions where intent_id not in (select intent_id from order_intents)" 0
+  eq "select count(*) from staged_orders where decision_id not in (select decision_id from risk_decisions where approved=1)" 0
+  eq "select count(*) from staged_orders where intent_id not in (select intent_id from order_intents)" 0
+  eq "select count(*) from broker_events where staged_order_id is not null and staged_order_id not in (select staged_order_id from staged_orders)" 0
+}
+
+step "integration gate: initialize and ingest fixture data"
 run_quiet init --db "$DB"
 eq "select value from settings where key='trading_mode'" observe
 eq 'select enabled from autonomy_controls where id=1' 0
@@ -145,19 +226,9 @@ run_quiet pos --db "$DB" --cik 0000000001 --quantity-shares 0 --market-value-usd
 run_quiet xbrl --db "$DB" --accession 0000000003-24-000001 --cik 0000000003 \
   --form 10-Q --filed-at 2024-04-30 --accepted-at 2024-04-30T12:00:00Z \
   --raw-root "$TMPDIR/raw" --package-root tests/fixtures/sec-package --strict --sleep-s 0
+check_data_authority
 
-ge 'select count(*) from source_documents' 3
-ge 'select count(*) from xbrl_contexts' 4
-ge 'select count(*) from xbrl_units' 1
-ge 'select count(*) from dimension_signatures' 2
-eq "select count(*) from filings where accession_number='0000000003-24-000001' and cik='0000000003' and form='10-Q' and filing_date='2024-04-30' and accepted_at='2024-04-30T12:00:00Z'" 1
-eq "select count(*) from xbrl_facts where accession_number='0000000003-24-000001'" 7
-eq "select count(*) from xbrl_facts where fact_id='' or security_id is null or cik='' or taxonomy='' or concept_qname='' or context_id='' or raw_fact_hash='' or available_at=''" 0
-eq "select count(*) from canonical_observations where security_id=3" 3
-eq "select count(*) from canonical_observations where security_id=3 and dimensional_scope!='consolidated_total'" 0
-eq "select count(*) from canonical_observations where resolver_version='' or metric_name='' or metric_kind='' or basis_id is null or period_id='' or unit_signature='' or dimensions_hash='' or dimensional_scope='' or observation_status not in ('selected','derived','rejected','superseded') or available_at=''" 0
-eq "select count(*) from events where event_type='xbrl_package_parsed' and json_extract(payload_json, '$.raw_facts_inserted')=7 and json_extract(payload_json, '$.canonical_selected_inserted')=3" 1
-
+step "integration gate: model, value, and risk path"
 run_quiet ci-seed --db "$DB"
 run_quiet recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
 run_quiet plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
@@ -167,13 +238,11 @@ approved=$(sql 'select count(*) from risk_decisions where approved=1')
 if [ "$approved" -lt 1 ]; then
   fail "expected at least one approved risk decision"
 fi
-
-eq "select count(*) from model_runs where run_id=''" 0
-eq "select count(*) from order_intents where intent_id='' or run_id='' or side not in ('buy','sell','none') or notional_usd is null or target_weight_ratio is null" 0
-eq "select count(*) from risk_decisions where decision_id='' or intent_id='' or reason=''" 0
-eq "select count(*) from risk_decisions where intent_id not in (select intent_id from order_intents)" 0
 eq "select count(*) from events where event_type='gate_completed' and json_extract(payload_json, '$.approved_count') >= 1" 1
+check_model_outputs
+check_risk_and_execution
 
+step "integration gate: operating modes and submission controls"
 expect_exit 3 run_quiet stage --db "$DB"
 eq 'select count(*) from staged_orders' 0
 
@@ -192,11 +261,14 @@ run_quiet mode --db "$DB" paper
 sqlite3 "$DB" "update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1;"
 expect_exit 4 run_quiet send --db "$DB" --adapter mock
 eq 'select count(*) from broker_events' 0
+
 run_quiet recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
 run_quiet send --db "$DB" --adapter mock
 eq 'select count(*) from broker_events' "$staged"
 eq "select count(*) from events where event_type='broker_order_submitted_mock'" "$staged"
+check_risk_and_execution
 
+step "integration gate: stale reconciliation rejects new decisions"
 approved_before_stale=$(sql 'select count(*) from risk_decisions where approved=1')
 sqlite3 "$DB" "update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1;"
 run_quiet plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
@@ -205,7 +277,11 @@ eq 'select count(*) from risk_decisions where approved=1' "$approved_before_stal
 ge "select count(*) from risk_decisions where approved=0 and reason='broker reconciliation is missing or stale'" 1
 ge "select count(*) from events where event_type='gate_completed' and json_extract(payload_json, '$.approved_count')=0 and json_extract(payload_json, '$.rejected_count') >= 1" 1
 
+step "evidence gate: report, status, and ledger invariants"
 run_quiet stat --db "$DB"
-check_db
+check_event_log
+check_data_authority
+check_model_outputs
+check_risk_and_execution
 
 printf 'check ok\n'
