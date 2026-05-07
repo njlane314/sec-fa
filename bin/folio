@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+set -eu
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ "$#" -gt 0 ]; then
+    cmd=$1
+    shift
+    case "$cmd" in
+        bootstrap) set -- init-db "$@" ;;
+        security) set -- security-upsert "$@" ;;
+        position) set -- position-upsert "$@" ;;
+        filings) set -- sec-watch "$@" ;;
+        archive) set -- sec-fetch "$@" ;;
+        company) set -- facts-companyfacts "$@" ;;
+        xbrl) set -- xbrl-parse "$@" ;;
+        universe) set -- universe-build "$@" ;;
+        reconcile) set -- broker-reconcile "$@" ;;
+        model) set -- model-run "$@" ;;
+        value) set -- model-run-v2 "$@" ;;
+        risk) set -- risk-check "$@" ;;
+        stage) set -- order-stage "$@" ;;
+        submit) set -- broker-submit "$@" ;;
+        mode) set -- set-mode "$@" ;;
+        halt) set -- trading-halt "$@" ;;
+        *) set -- "$cmd" "$@" ;;
+    esac
+fi
+exec python3 "$DIR/../tools/folio.py" "$@"

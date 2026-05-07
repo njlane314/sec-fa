@@ -105,20 +105,36 @@ Constants/macros:  FA_UPPER_SNAKE_CASE
 
 ## 4. Executables
 
-Use lower-kebab-case:
+Use single lowercase words. Do not use the project name as a binary prefix, and do not make command names by hyphenating a sentence.
+
+Use nouns for persisted objects, verbs for gates and side effects, and keep the normal operating sequence readable left to right:
 
 ```text
-fa-sec-watch
-fa-sec-fetch
-fa-facts-companyfacts
-fa-xbrl-parse
-fa-model-run
-fa-model-run-v2
-fa-risk-check
-fa-order-stage
-fa-broker-submit
-fa-broker-reconcile
-fa-report
+bootstrap
+security
+position
+filings
+archive
+company
+xbrl
+universe
+reconcile
+model
+value
+risk
+stage
+submit
+report
+notify
+status
+mode
+halt
+```
+
+Prefer composition through the operational store over long command names. Example:
+
+```text
+filings -> archive -> xbrl -> universe -> reconcile -> model -> risk -> stage -> submit -> report
 ```
 
 ## Observation naming

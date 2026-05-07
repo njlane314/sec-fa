@@ -4,13 +4,13 @@ set -eu
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo >/dev/null
 cmake --build build --parallel >/dev/null
 ctest --test-dir build --output-on-failure
-python3 -m py_compile tools/fa_cli.py
+python3 -m py_compile tools/folio.py
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
-DB="$TMPDIR/fa.db"
-LIB="build/libfa_core.so"
-[ -f "$LIB" ] || LIB="build/libfa_core.dylib"
+DB="$TMPDIR/folio.db"
+LIB="build/libfolio.so"
+[ -f "$LIB" ] || LIB="build/libfolio.dylib"
 
 python3 - "$DB" "$LIB" <<'PY'
 import datetime as dt
@@ -20,14 +20,14 @@ import sys
 from pathlib import Path
 
 repo = Path.cwd()
-spec = importlib.util.spec_from_file_location('fa_cli', repo / 'tools' / 'fa_cli.py')
-fa = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(fa)
+spec = importlib.util.spec_from_file_location('folio', repo / 'tools' / 'folio.py')
+cli = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cli)
 
 db, lib = sys.argv[1], sys.argv[2]
 
 def run(args):
-    rc = fa.main(args)
+    rc = cli.main(args)
     if rc != 0:
         raise SystemExit(f"command failed rc={rc}: {args}")
 
@@ -56,7 +56,7 @@ conn = sqlite3.connect(db)
 now = dt.datetime.now(dt.UTC).isoformat(timespec='seconds').replace('+00:00','Z')
 
 def period_id(sec, start, end):
-    return fa.stable_id('period', {'sec': sec, 'start': start, 'end': end})
+    return cli.stable_id('period', {'sec': sec, 'start': start, 'end': end})
 
 def ins_period(sec, start, end):
     pid = period_id(sec, start, end)
@@ -72,14 +72,14 @@ def ins_period(sec, start, end):
 
 def basis_for(metric):
     return {
-        1: fa.BASIS_REVENUE_EXCLUDING_TAX,
-        2: fa.BASIS_NET_INCOME,
-        3: fa.BASIS_EPS_DILUTED,
-        4: fa.BASIS_DILUTED_SHARES,
-        5: fa.BASIS_OPERATING_CASH_FLOW,
-        6: fa.BASIS_CAPEX,
-        7: fa.BASIS_CASH,
-        8: fa.BASIS_DEBT,
+        1: cli.BASIS_REVENUE_EXCLUDING_TAX,
+        2: cli.BASIS_NET_INCOME,
+        3: cli.BASIS_EPS_DILUTED,
+        4: cli.BASIS_DILUTED_SHARES,
+        5: cli.BASIS_OPERATING_CASH_FLOW,
+        6: cli.BASIS_CAPEX,
+        7: cli.BASIS_CASH,
+        8: cli.BASIS_DEBT,
     }[metric]
 
 def metric_kind_for(metric):
@@ -98,7 +98,7 @@ def unit_for(metric):
 
 def ins(sec, metric, value, start, end):
     pid, duration = ins_period(sec, start, end)
-    obs = fa.stable_id('obs', {'sec': sec, 'metric': metric, 'end': end})
+    obs = cli.stable_id('obs', {'sec': sec, 'metric': metric, 'end': end})
     conn.execute("""
     INSERT INTO canonical_observations(
       observation_id, observation_hash, resolver_version, security_id, cik, metric_id, metric_name, metric_kind,
@@ -109,12 +109,12 @@ def ins(sec, metric, value, start, end):
     ) VALUES (?, ?, 'synthetic_resolver', ?, ?, ?, ?, ?, ?, ?, 'fiscal_quarter', ?, 2023, 'Q1', ?,
               ?, ?, 'consolidated_total', 'selected', NULL, ?, 'test', 'test', 'synthetic', 0, '[]', 1.0,
               NULL, ?, ?)
-    """, (obs, obs.split('-',1)[1], sec, str(sec).zfill(10), metric, fa.METRIC_NAMES[metric],
+    """, (obs, obs.split('-',1)[1], sec, str(sec).zfill(10), metric, cli.METRIC_NAMES[metric],
           metric_kind_for(metric), basis_for(metric), pid, duration, value, unit_for(metric),
-          fa.TOTAL_DIMENSIONS_HASH, f'acc-{sec}-{metric}-{end}', now, now))
+          cli.TOTAL_DIMENSIONS_HASH, f'acc-{sec}-{metric}-{end}', now, now))
 
 def ins_instant(sec, metric, value, date):
-    pid = fa.stable_id('period', {'sec': sec, 'instant': date})
+    pid = cli.stable_id('period', {'sec': sec, 'instant': date})
     conn.execute("""
     INSERT OR IGNORE INTO reporting_periods(
       period_id, cik, accession_number, raw_start_date, raw_end_date, raw_instant_date,
@@ -122,7 +122,7 @@ def ins_instant(sec, metric, value, date):
       fiscal_year, fiscal_period, fiscal_period_ordinal, period_length_class, source, created_at
     ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, 0, 'instant', 'instant', 2023, 'Q4', 4, 'instant', 'synthetic', ?)
     """, (pid, str(sec).zfill(10), f'acc-{sec}-{date}', date, date, date, now))
-    obs = fa.stable_id('obs', {'sec': sec, 'metric': metric, 'instant': date})
+    obs = cli.stable_id('obs', {'sec': sec, 'metric': metric, 'instant': date})
     conn.execute("""
     INSERT INTO canonical_observations(
       observation_id, observation_hash, resolver_version, security_id, cik, metric_id, metric_name, metric_kind,
@@ -133,8 +133,8 @@ def ins_instant(sec, metric, value, date):
     ) VALUES (?, ?, 'synthetic_resolver', ?, ?, ?, ?, 'instant', ?, ?, 'instant', 0, 2023, 'Q4', ?,
               'USD', ?, 'consolidated_total', 'selected', NULL, ?, 'test', 'test', 'synthetic', 0, '[]', 1.0,
               NULL, ?, ?)
-    """, (obs, obs.split('-',1)[1], sec, str(sec).zfill(10), metric, fa.METRIC_NAMES[metric],
-          basis_for(metric), pid, value, fa.TOTAL_DIMENSIONS_HASH, f'acc-{sec}-{metric}-{date}', now, now))
+    """, (obs, obs.split('-',1)[1], sec, str(sec).zfill(10), metric, cli.METRIC_NAMES[metric],
+          basis_for(metric), pid, value, cli.TOTAL_DIMENSIONS_HASH, f'acc-{sec}-{metric}-{date}', now, now))
 
 quarters = [
     ('2022-07-01', '2022-09-30'),

@@ -29,7 +29,7 @@ SEC / market data
 ## Non-negotiable design choices
 
 1. The C++ core is pure computation. It does not fetch data, open network sockets, submit orders, read environment variables, or read the wall clock.
-2. Order submission is isolated. Only `fa-broker-submit` is allowed to talk to a broker adapter.
+2. Order submission is isolated. Only `submit` is allowed to talk to a broker adapter.
 3. The ledger is append-only. Mutable views are derived state.
 4. There is no historical trading backtester. Validation is by deterministic replay, synthetic scenarios, shadow operation, and online forecast accounting.
 5. The terminal is the first interface. The system emits machine-readable stdout, human-readable stderr, and meaningful exit codes.
@@ -54,7 +54,7 @@ Implemented:
 
 Not implemented by design in this first drop:
 
-- Live IBKR submission. `fa-broker-submit` is a guarded mock adapter unless replaced by an isolated broker adapter.
+- Live IBKR submission. `submit` is a guarded mock adapter unless replaced by an isolated broker adapter.
 - Web dashboard.
 - MCP assistant.
 - Historical trading backtester.
@@ -64,17 +64,17 @@ Not implemented by design in this first drop:
 ```sh
 cd sec-fa
 make check
-bin/fa init-db --db .fa.db
-bin/fa security-upsert --db .fa.db --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
-bin/fa xbrl-parse --db .fa.db --accession 0000320193-24-000123 --cik 0000320193 --symbol AAPL --raw-root raw --user-agent "Your Name your.email@example.com"
-bin/fa universe-build --db .fa.db --name us_core --min-adv-usd 0 --min-fact-count 2
-bin/fa broker-reconcile --db .fa.db --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
-bin/fa model-run --db .fa.db --core-lib build/libfa_core.so --portfolio-value-usd 100000 --cash-usd 100000
-bin/fa risk-check --db .fa.db --core-lib build/libfa_core.so
-bin/fa report daily --db .fa.db
+bin/bootstrap --db .folio.db
+bin/security --db .folio.db --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
+bin/xbrl --db .folio.db --accession 0000320193-24-000123 --cik 0000320193 --symbol AAPL --raw-root raw --user-agent "Your Name your.email@example.com"
+bin/universe --db .folio.db --name us_core --min-adv-usd 0 --min-fact-count 2
+bin/reconcile --db .folio.db --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
+bin/model --db .folio.db --core-lib build/libfolio.so --portfolio-value-usd 100000 --cash-usd 100000
+bin/risk --db .folio.db --core-lib build/libfolio.so
+bin/report daily --db .folio.db
 ```
 
-On macOS the shared library is usually `build/libfa_core.dylib`. On Linux it is `build/libfa_core.so`.
+On macOS the shared library is usually `build/libfolio.dylib`. On Linux it is `build/libfolio.so`.
 
 
 ## Accounting observation model
@@ -85,32 +85,44 @@ The model-input ABI now carries these semantics. The C++ core rejects ambiguous 
 
 ## Tool names
 
-The canonical entrypoint is `bin/fa`. Wrapper scripts also exist for UNIX-style composition:
+The canonical entrypoint is `bin/folio`. Public programs use single lowercase words with no project prefix:
 
 ```text
-fa-sec-watch
-fa-sec-fetch
-fa-facts-companyfacts
-fa-xbrl-parse
-fa-universe-build
-fa-model-run
-fa-model-run-v2
-fa-risk-check
-fa-order-stage
-fa-broker-reconcile
-fa-broker-submit
-fa-notify
-fa-report
+bootstrap
+security
+position
+filings
+archive
+company
+xbrl
+universe
+reconcile
+model
+value
+risk
+stage
+submit
+report
+notify
+status
+mode
+halt
 ```
 
-Each wrapper calls the matching `bin/fa` subcommand.
+The programs compose through the database, immutable raw store, and append-only ledger rather than through textual stdin/stdout filters. A normal operator sequence is:
+
+```text
+filings -> archive -> xbrl -> universe -> reconcile -> model -> risk -> stage -> submit -> report
+```
+
+`company` remains a fallback/reconciliation importer for SEC companyfacts data. `value` runs the newer valuation path.
 
 ## Repository map
 
 ```text
 include/fa_core.h          C ABI boundary
 core/fa_core.cpp           deterministic C++ kernel and risk gate
-tools/fa_cli.py            CLI/service shell using only Python stdlib
+tools/folio.py             CLI/service shell using only Python stdlib
 db/sqlite/001_schema.sql   local operational schema, raw facts, periods, canonical observations
 db/postgres/001_schema.sql production schema sketch
 schemas/                   event/control and observation schemas

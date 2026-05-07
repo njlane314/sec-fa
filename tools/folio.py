@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sec-fa command-line/service shell.
+"""folio command-line/service shell.
 
 The C++ core is the authority for deterministic model output and hard risk checks.
 This Python shell handles orchestration, SEC retrieval, local persistence, reports,
@@ -489,7 +489,7 @@ def ensure_db(conn: sqlite3.Connection) -> None:
     try:
         conn.execute("SELECT 1 FROM settings LIMIT 1")
     except sqlite3.Error as exc:
-        raise FaError("database is not initialized; run `fa init-db` first") from exc
+        raise FaError("database is not initialized; run `bootstrap --db <path>` first") from exc
 
 
 def append_event(conn: sqlite3.Connection, event_type: str, payload: dict[str, Any], version: int = 1) -> dict[str, Any]:
@@ -1151,7 +1151,7 @@ def seed_metric_concept_candidates(conn: sqlite3.Connection) -> None:
                 canonical_json(candidate["allowed_units"]),
                 "consolidated_total_only",
                 canonical_json(["10-K", "10-Q", "10-K/A", "10-Q/A"]),
-                "seeded by fa_cli constants",
+                "seeded by folio constants",
             ),
         )
 
@@ -3715,7 +3715,7 @@ def add_common_db(parser: argparse.ArgumentParser) -> None:
 
 
 def add_core_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--core-lib", required=True, help="Path to libfa_core shared library")
+    parser.add_argument("--core-lib", required=True, help="Path to libfolio shared library")
     parser.add_argument("--portfolio-value-usd", type=float, default=None)
     parser.add_argument("--cash-usd", type=float, default=None)
     parser.add_argument("--max-name-weight-ratio", type=float, default=0.05)
@@ -3727,7 +3727,7 @@ def add_core_args(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="fa", description="sec-fa toolchain")
+    parser = argparse.ArgumentParser(prog="folio", description="folio toolchain")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("init-db")
@@ -3877,7 +3877,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("notify")
     p.add_argument("--method", choices=["ntfy", "pushover"], required=True)
-    p.add_argument("--title", default="sec-fa")
+    p.add_argument("--title", default="folio")
     p.add_argument("--message", required=True)
     p.add_argument("--priority", default="default")
     p.add_argument("--ntfy-topic")
