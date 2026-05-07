@@ -104,7 +104,6 @@ sym
 pos
 watch
 pull
-comp
 xbrl
 univ
 recon
@@ -153,7 +152,7 @@ recon ---------------------+
                     report   ping
 ```
 
-`comp` is reserved for a future companyfacts fallback/reconciliation importer. `value` runs the newer valuation path.
+`value` runs the valuation path.
 
 ## Composition examples
 

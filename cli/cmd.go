@@ -12,7 +12,7 @@ import (
 )
 
 func cmdOrderStage(args []string) error {
-	fs := newFlagSet("order-stage")
+	fs := newFlagSet("stage")
 	dbPath := fs.String("db", "", "")
 	runID := fs.String("run-id", "", "")
 	limit := fs.Int("limit", 100, "")
@@ -84,7 +84,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, stagedID, decisionID, intentID, securityID, side,
 }
 
 func cmdBrokerSubmit(args []string) error {
-	fs := newFlagSet("broker-submit")
+	fs := newFlagSet("send")
 	dbPath := fs.String("db", "", "")
 	adapter := fs.String("adapter", "mock", "")
 	limit := fs.Int("limit", 100, "")
@@ -175,7 +175,7 @@ func requireFreshBrokerReconciliation(db *sql.DB, maxAgeSec int64) error {
 }
 
 func cmdSetMode(args []string) error {
-	fs := newFlagSet("set-mode")
+	fs := newFlagSet("mode")
 	dbPath := fs.String("db", "", "")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -192,7 +192,7 @@ func cmdSetMode(args []string) error {
 }
 
 func cmdTradingHalt(args []string) error {
-	fs := newFlagSet("trading-halt")
+	fs := newFlagSet("halt")
 	dbPath := fs.String("db", "", "")
 	reason := fs.String("reason", "", "")
 	if err := parseFlags(fs, args); err != nil {
@@ -230,7 +230,7 @@ ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated
 }
 
 func cmdStatus(args []string) error {
-	fs := newFlagSet("status")
+	fs := newFlagSet("stat")
 	dbPath := fs.String("db", "", "")
 	if err := parseFlags(fs, args); err != nil {
 		return err
@@ -288,7 +288,7 @@ func cmdReport(args []string) error {
 }
 
 func cmdNotify(args []string) error {
-	fs := newFlagSet("notify")
+	fs := newFlagSet("ping")
 	method := fs.String("method", "", "")
 	title := fs.String("title", "sec-fa", "")
 	message := fs.String("message", "", "")
@@ -323,7 +323,7 @@ func cmdNotify(args []string) error {
 }
 
 func cmdUniverseBuild(args []string) error {
-	fs := newFlagSet("universe-build")
+	fs := newFlagSet("univ")
 	dbPath := fs.String("db", "", "")
 	name := fs.String("name", "default", "")
 	minADV := fs.Float64("min-adv-usd", 0, "")
@@ -377,121 +377,6 @@ ORDER BY s.security_id`, *minADV, *minFacts)
 		return err
 	}
 	return jsonLine(event)
-}
-
-func cmdCISeed(args []string) error {
-	fs := newFlagSet("ci-seed")
-	dbPath := fs.String("db", "", "")
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	db, err := openDB(*dbPath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := ensureDB(db); err != nil {
-		return err
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	quarters := [][2]string{
-		{"2022-07-01", "2022-09-30"},
-		{"2022-10-01", "2022-12-31"},
-		{"2023-01-01", "2023-03-31"},
-		{"2023-04-01", "2023-06-30"},
-		{"2023-07-01", "2023-09-30"},
-	}
-	revenueBySecurity := map[int][]float64{
-		1: {90, 95, 100, 115, 125},
-		2: {110, 105, 100, 95, 90},
-	}
-	for sec, revenues := range revenueBySecurity {
-		for i, q := range quarters {
-			revenue := revenues[i]
-			if err := insertSyntheticObservation(tx, sec, metricRevenue, revenue, q[0], q[1], false); err != nil {
-				return err
-			}
-			if err := insertSyntheticObservation(tx, sec, metricNetIncome, revenue/10, q[0], q[1], false); err != nil {
-				return err
-			}
-			if err := insertSyntheticObservation(tx, sec, metricEPSDiluted, revenue/100, q[0], q[1], false); err != nil {
-				return err
-			}
-			if err := insertSyntheticObservation(tx, sec, metricDilutedShares, 20, q[0], q[1], false); err != nil {
-				return err
-			}
-			if err := insertSyntheticObservation(tx, sec, metricOperatingCashFlow, revenue*0.18, q[0], q[1], false); err != nil {
-				return err
-			}
-			if err := insertSyntheticObservation(tx, sec, metricCapex, revenue*0.04, q[0], q[1], false); err != nil {
-				return err
-			}
-		}
-		if err := insertSyntheticObservation(tx, sec, metricCash, 50, "2023-09-30", "2023-09-30", true); err != nil {
-			return err
-		}
-		if err := insertSyntheticObservation(tx, sec, metricDebt, 10, "2023-09-30", "2023-09-30", true); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return jsonLine(map[string]any{"status": "seeded"})
-}
-
-func insertSyntheticObservation(tx execer, sec, metric int, value float64, start, end string, instant bool) error {
-	cik := fmt.Sprintf("%010d", sec)
-	now := utcNow()
-	periodKind := "duration"
-	semantics := "fiscal_quarter"
-	duration := durationDays(start, end)
-	rawStart := any(start)
-	rawEnd := any(end)
-	rawInstant := any(nil)
-	if instant {
-		periodKind = "instant"
-		semantics = "instant"
-		duration = 0
-		rawStart = nil
-		rawEnd = nil
-		rawInstant = end
-	}
-	pid := stableID("period", map[string]any{"sec": sec, "metric": metric, "start": start, "end": end, "instant": instant})
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO reporting_periods(
-period_id, cik, accession_number, raw_start_date, raw_end_date, raw_instant_date,
-start_date_inclusive, end_date_exclusive, duration_days, period_kind, period_semantics,
-fiscal_year, fiscal_period, fiscal_period_ordinal, period_length_class, source, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2023, 'Q1', 1, ?, 'synthetic', ?)`,
-		pid, cik, fmt.Sprintf("acc-%d-%d-%s", sec, metric, end), rawStart, rawEnd, rawInstant,
-		start, end, duration, periodKind, semantics, periodLengthClass(duration), now); err != nil {
-		return err
-	}
-	obs := stableID("obs", map[string]any{"sec": sec, "metric": metric, "start": start, "end": end, "instant": instant})
-	unit := "USD"
-	if metric == metricEPSDiluted {
-		unit = "USD/shares"
-	}
-	if metric == metricDilutedShares {
-		unit = "shares"
-	}
-	_, err := tx.Exec(`INSERT OR IGNORE INTO canonical_observations(
-observation_id, observation_hash, resolver_version, security_id, cik, metric_id, metric_name, metric_kind,
-basis_id, period_id, period_semantics, duration_days, fiscal_year, fiscal_period, value_decimal,
-unit_signature, dimensions_hash, dimensional_scope, observation_status, source_fact_id, source_accession,
-taxonomy, concept_qname, selection_reason, quality_flags, quality_flags_json, quality_score,
-accepted_at, available_at, created_at)
-VALUES (?, ?, 'synthetic_resolver', ?, ?, ?, ?, ?, ?, ?, ?, ?, 2023, 'Q1', ?,
-?, ?, 'consolidated_total', 'selected', NULL, ?, 'test', 'test', 'synthetic', 0, '[]', 1.0,
-NULL, ?, ?)`,
-		obs, strings.TrimPrefix(obs, "obs-"), sec, cik, metric, metricNames[metric], metricKinds[metric],
-		basisByMetric[metric], pid, semantics, duration, value, unit, totalDimensionsHash,
-		fmt.Sprintf("acc-%d-%d-%s", sec, metric, end), now, now)
-	return err
 }
 
 func setting(db *sql.DB, key string) string {

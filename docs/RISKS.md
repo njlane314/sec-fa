@@ -44,7 +44,7 @@ Controls:
 ```text
 CIK/security_id primary identity
 symbol is display metadata only
-security-upsert requires explicit CIK
+sym requires explicit CIK
 future security master must include IBKR contract id
 ```
 

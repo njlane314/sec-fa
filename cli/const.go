@@ -35,6 +35,7 @@ const (
 	stmtLowConfidence           = 1 << 7
 	resolverVersion             = "canonical_resolver_v3"
 	totalDimensionsJSON         = "{}"
+	defaultDBPath               = ".fa.db"
 	defaultUserAgent            = "sec-fa operator@example.invalid"
 	secArchiveBaseURL           = "https://www.sec.gov/Archives/edgar/data/%d/%s"
 	defaultScenarioAssumptionID = "default"

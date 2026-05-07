@@ -51,13 +51,10 @@ func ensureDB(db *sql.DB) error {
 }
 
 func cmdInitDB(args []string) error {
-	fs := newFlagSet("init-db")
-	dbPath := fs.String("db", "", "SQLite database path")
+	fs := newFlagSet("init")
+	dbPath := fs.String("db", defaultDBPath, "SQLite database path")
 	if err := parseFlags(fs, args); err != nil {
 		return err
-	}
-	if *dbPath == "" {
-		return fail(2, "--db is required")
 	}
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil && filepath.Dir(*dbPath) != "." {
 		return err
@@ -84,7 +81,7 @@ func cmdInitDB(args []string) error {
 }
 
 func cmdSecurityUpsert(args []string) error {
-	fs := newFlagSet("security-upsert")
+	fs := newFlagSet("sym")
 	dbPath := fs.String("db", "", "")
 	cik := fs.String("cik", "", "")
 	symbol := fs.String("symbol", "", "")
@@ -133,7 +130,7 @@ investable=excluded.investable, price_usd=excluded.price_usd, adv_usd=excluded.a
 }
 
 func cmdPositionUpsert(args []string) error {
-	fs := newFlagSet("position-upsert")
+	fs := newFlagSet("pos")
 	dbPath := fs.String("db", "", "")
 	cik := fs.String("cik", "", "")
 	quantity := fs.Float64("quantity-shares", 0, "")
@@ -177,7 +174,7 @@ market_value_usd=excluded.market_value_usd, weight_ratio=excluded.weight_ratio, 
 	return jsonLine(event)
 }
 func cmdBrokerReconcile(args []string) error {
-	fs := newFlagSet("broker-reconcile")
+	fs := newFlagSet("recon")
 	dbPath := fs.String("db", "", "")
 	portfolioValue := fs.Float64("portfolio-value-usd", 0, "")
 	cash := fs.Float64("cash-usd", 0, "")

@@ -48,7 +48,6 @@ sym     upsert issuer/security metadata
 pos     upsert current internal position state
 watch   discover recent SEC filings
 pull    fetch immutable SEC filing artifacts
-comp    reserved for SEC companyfacts fallback data
 xbrl    parse an accession package and resolve observations
 univ    construct the investable/research universe
 recon   record external broker/cash truth

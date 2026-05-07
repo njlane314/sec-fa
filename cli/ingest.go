@@ -13,7 +13,7 @@ import (
 )
 
 func cmdSecWatch(args []string) error {
-	fs := newFlagSet("sec-watch")
+	fs := newFlagSet("watch")
 	dbPath := fs.String("db", "", "")
 	cik := fs.String("cik", "", "")
 	userAgent := fs.String("user-agent", defaultUserAgent, "")
@@ -85,7 +85,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, accession, cik10, form, get("filingDate", i), 
 }
 
 func cmdSecFetch(args []string) error {
-	fs := newFlagSet("sec-fetch")
+	fs := newFlagSet("pull")
 	dbPath := fs.String("db", "", "")
 	rawRoot := fs.String("raw-root", "raw", "")
 	userAgent := fs.String("user-agent", defaultUserAgent, "")

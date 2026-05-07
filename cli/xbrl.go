@@ -74,7 +74,7 @@ type rawFact struct {
 }
 
 func cmdXBRLParse(args []string) error {
-	fs := newFlagSet("xbrl-parse")
+	fs := newFlagSet("xbrl")
 	dbPath := fs.String("db", "", "")
 	accession := fs.String("accession", "", "")
 	cik := fs.String("cik", "", "")

@@ -1,4 +1,6 @@
-.PHONY: all build test check clean init-demo
+.PHONY: all build test check clean setup-db init-demo
+
+DB ?= .fa.db
 
 all: build
 
@@ -12,6 +14,10 @@ test: build
 
 check:
 	./check
+
+setup-db:
+	./sec init --db "$(DB)"
+	@echo "Database ready at $(DB)"
 
 clean:
 	rm -rf build .sec-demo.db raw

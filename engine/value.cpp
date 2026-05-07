@@ -527,21 +527,3 @@ extern "C" fa_status_code fa_build_valuation_plan_v1(
                         output->order_intent_count);
     return FA_OK;
 }
-
-extern "C" fa_status_code fa_value_v1(
-    const fa_statement_snapshot_v1* statements,
-    size_t statement_count,
-    const fa_security_v1* securities,
-    size_t security_count,
-    const fa_position_v1* positions,
-    size_t position_count,
-    const fa_valuation_scenario_v1* scenarios,
-    size_t scenario_count,
-    const fa_model_config_v1* config,
-    const fa_risk_limits_v1* risk_limits,
-    fa_value_output_v1* output) {
-    return fa_build_valuation_plan_v1(statements, statement_count, securities,
-                                      security_count, positions, position_count,
-                                      scenarios, scenario_count, config, risk_limits,
-                                      output);
-}

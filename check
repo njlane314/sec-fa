@@ -92,15 +92,17 @@ nm -g "$LIB" | awk '{print $NF}' | sed 's/^_//' | sort -u > "$symbols_file"
 for symbol in \
   fa_status_name \
   fa_build_portfolio_plan_v1 \
-  fa_plan_v1 \
   fa_build_statement_snapshots_v1 \
   fa_statement_build_output_free_v1 \
   fa_build_valuation_plan_v1 \
-  fa_value_v1 \
-  fa_check_risk_limits_v1 \
-  fa_gate_v1; do
+  fa_check_risk_limits_v1; do
   if ! grep -qx "$symbol" "$symbols_file"; then
     fail "missing exported C ABI symbol: $symbol"
+  fi
+done
+for symbol in fa_plan_v1 fa_value_v1 fa_gate_v1; do
+  if grep -qx "$symbol" "$symbols_file"; then
+    fail "legacy C ABI symbol is still exported: $symbol"
   fi
 done
 
@@ -229,7 +231,7 @@ run_quiet xbrl --db "$DB" --accession 0000000003-24-000001 --cik 0000000003 \
 check_data_authority
 
 step "integration gate: model, value, and risk path"
-run_quiet ci-seed --db "$DB"
+sqlite3 "$DB" < tests/fixtures/check-model-observations.sql
 run_quiet recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
 run_quiet plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
 run_quiet value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50

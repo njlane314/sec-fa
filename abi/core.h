@@ -317,17 +317,6 @@ fa_status_code fa_build_portfolio_plan_v1(
     const fa_risk_limits_v1* risk_limits,
     fa_plan_output_v1* output);
 
-fa_status_code fa_plan_v1(
-    const fa_canonical_fact_v1* facts,
-    size_t fact_count,
-    const fa_security_v1* securities,
-    size_t security_count,
-    const fa_position_v1* positions,
-    size_t position_count,
-    const fa_model_config_v1* config,
-    const fa_risk_limits_v1* risk_limits,
-    fa_plan_output_v1* output);
-
 void fa_plan_output_free_v1(fa_plan_output_v1* output);
 
 fa_status_code fa_build_statement_snapshots_v1(
@@ -354,30 +343,9 @@ fa_status_code fa_build_valuation_plan_v1(
     const fa_risk_limits_v1* risk_limits,
     fa_value_output_v1* output);
 
-fa_status_code fa_value_v1(
-    const fa_statement_snapshot_v1* statements,
-    size_t statement_count,
-    const fa_security_v1* securities,
-    size_t security_count,
-    const fa_position_v1* positions,
-    size_t position_count,
-    const fa_valuation_scenario_v1* scenarios,
-    size_t scenario_count,
-    const fa_model_config_v1* config,
-    const fa_risk_limits_v1* risk_limits,
-    fa_value_output_v1* output);
-
 void fa_value_output_free_v1(fa_value_output_v1* output);
 
 fa_status_code fa_check_risk_limits_v1(
-    const fa_order_intent_v1* order_intents,
-    size_t order_intent_count,
-    const fa_security_v1* securities,
-    size_t security_count,
-    const fa_risk_limits_v1* risk_limits,
-    fa_gate_output_v1* output);
-
-fa_status_code fa_gate_v1(
     const fa_order_intent_v1* order_intents,
     size_t order_intent_count,
     const fa_security_v1* securities,

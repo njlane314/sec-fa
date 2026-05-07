@@ -117,7 +117,6 @@ sym
 pos
 watch
 pull
-comp
 xbrl
 univ
 recon

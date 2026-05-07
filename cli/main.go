@@ -38,22 +38,24 @@ func run(args []string) error {
 		printHelp()
 		return nil
 	}
-	cmd := aliasCommand(args[0])
+	cmd := args[0]
 	rest := args[1:]
 	switch cmd {
-	case "init-db":
+	case "init":
 		return cmdInitDB(rest)
-	case "security-upsert":
+	case "sym":
 		return cmdSecurityUpsert(rest)
-	case "position-upsert":
+	case "pos":
 		return cmdPositionUpsert(rest)
-	case "sec-watch":
+	case "watch":
 		return cmdSecWatch(rest)
-	case "sec-fetch":
+	case "pull":
 		return cmdSecFetch(rest)
-	case "xbrl-parse":
+	case "xbrl":
 		return cmdXBRLParse(rest)
-	case "broker-reconcile":
+	case "univ":
+		return cmdUniverseBuild(rest)
+	case "recon":
 		return cmdBrokerReconcile(rest)
 	case "plan":
 		return cmdPlan(rest)
@@ -61,78 +63,29 @@ func run(args []string) error {
 		return cmdValue(rest)
 	case "gate":
 		return cmdGate(rest)
-	case "order-stage":
+	case "stage":
 		return cmdOrderStage(rest)
-	case "broker-submit":
+	case "send":
 		return cmdBrokerSubmit(rest)
-	case "set-mode":
+	case "mode":
 		return cmdSetMode(rest)
-	case "trading-halt":
+	case "halt":
 		return cmdTradingHalt(rest)
-	case "status":
+	case "stat":
 		return cmdStatus(rest)
 	case "report":
 		return cmdReport(rest)
-	case "notify":
+	case "ping":
 		return cmdNotify(rest)
-	case "universe-build":
-		return cmdUniverseBuild(rest)
-	case "ci-seed":
-		return cmdCISeed(rest)
-	case "facts-companyfacts":
-		return fail(2, "%s is reserved for a future companyfacts fallback; use watch, pull, and xbrl for the Go ingestion path", cmd)
 	default:
 		return fail(2, "unknown command: %s", args[0])
-	}
-}
-
-func aliasCommand(cmd string) string {
-	switch cmd {
-	case "init":
-		return "init-db"
-	case "sym":
-		return "security-upsert"
-	case "pos":
-		return "position-upsert"
-	case "watch":
-		return "sec-watch"
-	case "pull":
-		return "sec-fetch"
-	case "comp":
-		return "facts-companyfacts"
-	case "xbrl":
-		return "xbrl-parse"
-	case "univ":
-		return "universe-build"
-	case "recon":
-		return "broker-reconcile"
-	case "plan":
-		return "plan"
-	case "value":
-		return "value"
-	case "gate":
-		return "gate"
-	case "stage":
-		return "order-stage"
-	case "send":
-		return "broker-submit"
-	case "mode":
-		return "set-mode"
-	case "halt":
-		return "trading-halt"
-	case "stat":
-		return "status"
-	case "ping":
-		return "notify"
-	default:
-		return cmd
 	}
 }
 
 func printHelp() {
 	fmt.Println("usage: sec <command> [options]")
 	fmt.Println()
-	fmt.Println("commands: init sym pos watch pull comp xbrl univ recon plan value gate stage send mode halt stat report ping")
+	fmt.Println("commands: init sym pos watch pull xbrl univ recon plan value gate stage send mode halt stat report ping")
 }
 
 func newFlagSet(name string) *flag.FlagSet {
