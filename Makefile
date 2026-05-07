@@ -5,7 +5,7 @@ all: build
 build:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 	cmake --build build --parallel
-	go build -o build/sec ./app
+	go build -o build/sec ./cli
 
 test: build
 	ctest --test-dir build --output-on-failure

@@ -2,7 +2,7 @@
 
 ## 1. C ABI
 
-The public C ABI is `include/core.h`. All public structs include `abi_version` and all functions return explicit status codes.
+The public C ABI is `abi/core.h`. All public structs include `abi_version` and all functions return explicit status codes.
 
 The model function consumes:
 
@@ -54,8 +54,8 @@ Events are JSON payloads stored in the `events` table. They are append-only evid
 }
 ```
 
-Schema contract files live in `docs/schemas/`. They are plain, line-oriented
-contracts; the format is documented in `docs/schemas/FORMAT`.
+Schema contract files live in `docs/contracts/`. They are plain, line-oriented
+contracts; the format is documented in `docs/contracts/FORMAT`.
 
 ## 3. Command interface
 

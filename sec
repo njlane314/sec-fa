@@ -6,4 +6,4 @@ export SEC_FA_ROOT=$ROOT
 if [ -x "$ROOT/build/sec" ]; then
     exec "$ROOT/build/sec" "$@"
 fi
-exec go run "$ROOT/app" "$@"
+exec go run "$ROOT/cli" "$@"

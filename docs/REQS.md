@@ -81,13 +81,13 @@ FA-LEDGER-003
 requirement_id | method                 | evidence
 FA-SAF-001     | C++ unit + CI smoke     | tests/test_core.cpp, check
 FA-SAF-002     | C++ unit + CI smoke     | tests/test_core.cpp, check
-FA-SAF-003     | C++ risk gate           | core/gate.cpp
-FA-SAF-004     | C++ risk gate           | core/gate.cpp
-FA-SAF-005     | C++ risk gate           | core/gate.cpp
-FA-SAF-006     | C++ risk gate           | core/gate.cpp
+FA-SAF-003     | C++ risk gate           | engine/gate.cpp
+FA-SAF-004     | C++ risk gate           | engine/gate.cpp
+FA-SAF-005     | C++ risk gate           | engine/gate.cpp
+FA-SAF-006     | C++ risk gate           | engine/gate.cpp
 FA-SAF-008     | DB initialization check | schema.sql
-FA-MODEL-002   | code review + checks    | core has no IO imports/calls
-FA-MODEL-003   | header inspection       | include/core.h
+FA-MODEL-002   | code review + checks    | engine has no IO imports/calls
+FA-MODEL-003   | header inspection       | abi/core.h
 FA-MODEL-004   | ABI inspection          | fa_order_intent_v1 only
 ```
 

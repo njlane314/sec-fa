@@ -15,4 +15,4 @@
 # needed. Dotted paths describe nested payload fields.
 #
 # Example:
-#   awk -F '\t' '$1 == "field" && $3 == "required" { print $2 }' docs/schemas/observation.schema
+#   awk -F '\t' '$1 == "field" && $3 == "required" { print $2 }' docs/contracts/observation.schema

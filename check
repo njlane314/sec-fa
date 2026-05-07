@@ -4,7 +4,7 @@ set -eu
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo >/dev/null
 cmake --build build --parallel >/dev/null
 ctest --test-dir build --output-on-failure
-go build -o build/sec ./app
+go build -o build/sec ./cli
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT

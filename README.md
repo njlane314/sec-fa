@@ -230,22 +230,22 @@ Guarded mock submission:
 The executable templates encode those patterns directly:
 
 ```text
-examples/observe
-examples/shadow
-examples/mock
+flows/observe
+flows/shadow
+flows/mock
 ```
 
 ## Repository map
 
 ```text
-include/core.h             C ABI boundary
-core/*.cpp                 deterministic C++ model, valuation, and risk gate
-app/                       Go orchestration package
-schema.sql                local operational schema, raw facts, periods, canonical observations
-docs/schemas/              line-oriented event/control and observation contracts
-docs/                      intent, requirements, hazards, naming, operations
-tests/                     C++ unit tests
-check                     mechanical repository check
+abi/core.h       C ABI boundary
+engine/*.cpp     deterministic C++ model, valuation, and risk gate
+cli/             Go orchestration package
+schema.sql       local operational schema, raw facts, periods, canonical observations
+docs/contracts/  line-oriented event/control and observation contracts
+docs/            intent, requirements, hazards, naming, operations
+tests/           C++ unit tests
+check            mechanical repository check
 ```
 
 ## Operating modes

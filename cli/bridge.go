@@ -1,7 +1,7 @@
 package main
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../include
+#cgo CFLAGS: -I${SRCDIR}/../abi
 #cgo linux LDFLAGS: -ldl
 #include <dlfcn.h>
 #include <stdlib.h>

@@ -1,7 +1,7 @@
 package main
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../include
+#cgo CFLAGS: -I${SRCDIR}/../abi
 #include "core.h"
 
 typedef fa_status_code (*fa_model_run_v1_fn)(
