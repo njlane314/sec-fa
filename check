@@ -58,7 +58,7 @@ fi
 
 step "static gate: formatting and source boundaries"
 sh -n "$0"
-gofmt_files=$(find cmd -name "*.go" -print 2>/dev/null | xargs gofmt -l)
+gofmt_files=$(find cmd server daemon -name "*.go" -print 2>/dev/null | xargs gofmt -l)
 if [ -n "$gofmt_files" ]; then
   printf '%s\n' "$gofmt_files" >&2
   fail "Go files need gofmt"
@@ -71,11 +71,11 @@ forbid_contains abi/core.h '\bstd::|<[[:space:]]*(vector|string|array|span|map|u
 
 require_contains abi/core.h '^#define FA_ABI_VERSION 4u$'
 require_contains abi/core.h 'fa_build_statement_snapshots_v1'
-require_contains rust/sec-cli/src/fa_core.rs 'fa_build_statement_snapshots_v1'
-require_contains rust/sec-cli/src/main.rs 'statement_builder_diagnostics'
-forbid_contains rust/sec-cli/src/main.rs 'fn[[:space:]]+(build_latest_statements|build_statement|latest_flow_ttm|latest_point)[[:space:]]*\('
-forbid_contains rust/sec-cli/src/main.rs 'struct[[:space:]]+MetricPoint\b'
-require_contains rust/sec-cli/src/main.rs 'require_fresh_broker_reconciliation'
+require_contains cli/src/fa_core.rs 'fa_build_statement_snapshots_v1'
+require_contains cli/src/main.rs 'statement_builder_diagnostics'
+forbid_contains cli/src/main.rs 'fn[[:space:]]+(build_latest_statements|build_statement|latest_flow_ttm|latest_point)[[:space:]]*\('
+forbid_contains cli/src/main.rs 'struct[[:space:]]+MetricPoint\b'
+require_contains cli/src/main.rs 'require_fresh_broker_reconciliation'
 require_contains docs/CODE.md 'explicit Class B data logic'
 require_contains docs/REQS.md 'FA-MODEL-012'
 
@@ -111,11 +111,9 @@ step "build gate: Rust CLI/parser and Go server"
 cargo test --workspace >&2
 cargo build --release --workspace >&2
 cp target/release/sec "$BUILD_DIR/sec"
-go test ./cmd/secd >&2
-go vet ./cmd/secd >&2
+go test ./... >&2
+go vet ./... >&2
 go build -o "$BUILD_DIR/secd" ./cmd/secd >&2
-go test ./cmd/sec-daemon >&2
-go vet ./cmd/sec-daemon >&2
 for daemon in sec-watchd sec-pulld sec-xbrld sec-pland sec-gated sec-staged sec-submitd sec-recond sec-notifyd; do
   go build -o "$BUILD_DIR/$daemon" ./cmd/sec-daemon >&2
 done

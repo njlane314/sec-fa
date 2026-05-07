@@ -82,7 +82,7 @@ FA-LEDGER-003
 
 ```text
 requirement_id | method                 | evidence
-FA-SAF-001     | C++ unit + CI smoke     | tests/test_core.cpp, rust/sec-cli/src/main.rs, check
+FA-SAF-001     | C++ unit + CI smoke     | tests/test_core.cpp, cli/src/main.rs, check
 FA-SAF-002     | C++ unit + CI smoke     | tests/test_core.cpp, check
 FA-SAF-003     | C++ risk gate           | engine/gate.cpp
 FA-SAF-004     | C++ risk gate           | engine/gate.cpp

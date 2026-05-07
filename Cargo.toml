@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "rust/sec-cli",
-    "rust/sec-filings"
+    "cli",
+    "filings"
 ]
 
 [workspace.package]

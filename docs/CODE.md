@@ -50,7 +50,7 @@ network calls require explicit User-Agent where required
 
 Rust and Go code may use dynamic allocation, libraries, SQLite, XML parsing, and network I/O. They must remain outside the pure C++ core.
 
-The accession XBRL parser and canonical observation resolver in `rust/sec-filings` are explicit Class B data logic, not mere orchestration. They may remain in Rust because XBRL parsing and source-fact normalization are messy data-ingestion work, but their resolver rules must stay named, tested, and auditable. They must not stage, submit, or approve orders. If canonicalization becomes part of execution authority, it must move behind a separate reviewed engine boundary instead of being hidden inside CLI command flow.
+The accession XBRL parser and canonical observation resolver in `filings/` are explicit Class B data logic, not mere orchestration. They may remain in Rust because XBRL parsing and source-fact normalization are messy data-ingestion work, but their resolver rules must stay named, tested, and auditable. They must not stage, submit, or approve orders. If canonicalization becomes part of execution authority, it must move behind a separate reviewed engine boundary instead of being hidden inside CLI command flow.
 
 The Rust `value` command is orchestration only for valuation inputs: it loads canonical observations, calls `fa_build_statement_snapshots_v1`, then persists the returned statement snapshots. It must not rebuild TTM flows, choose statement anchors, or assign statement-quality flags in Rust.
 

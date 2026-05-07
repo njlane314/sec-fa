@@ -25,8 +25,7 @@ daemons:
 test: build
 	ctest --test-dir build --output-on-failure
 	$(CARGO) test --workspace
-	$(GO) test ./cmd/secd
-	$(GO) test ./cmd/sec-daemon
+	$(GO) test ./...
 
 check:
 	./check

@@ -36,6 +36,102 @@ queued -> leased -> failed -> leased ... -> dead
 
 A crash during a command leaves the work item leased until `lease_until`; another daemon can retry it after the lease expires. A crash after the command succeeds but before the work item is marked succeeded can re-run the same command, so commands must remain idempotent or append-only with deterministic evidence.
 
+The queue must remain a durable authority surface, not an in-memory coordination trick. Useful near-term queue additions are:
+
+```text
+transition_runs       one row per claimed transition, with input/output hashes
+dead or blocked work  operator-visible failures that should not retry blindly
+daemon_cursors        durable read positions for event-tail or polling workers
+```
+
+`blocked` is distinct from `dead`: stale reconciliation, halted mode, missing broker credentials, missing core libraries, or schema mismatch may become valid after state changes. `dead` means operator repair is required.
+
+## Control-plane primitives
+
+The adjacent technologies worth adding are the ones that make background work safe, observable, and bounded:
+
+```text
+supervision      systemd service/timer units before Kubernetes
+leases           SQLite short transactions first; Postgres SKIP LOCKED later if needed
+rate limits      explicit token buckets for SEC, broker, notification, and model pressure
+circuit breakers pause dependency-specific work after repeated failures
+kill switches    durable config checked inside commands, not only daemons
+observability    structured logs, queue metrics, heartbeat age, and transition durations
+schema migration versioned SQL with binary min/max supported schema checks
+```
+
+Do not add Kafka, Kubernetes, Temporal, or a separate stream broker until there is a concrete pressure that SQLite-backed work items and a single supervised host cannot handle. The first scaling move should be Postgres-backed work items with notification wakeups; durable streams are a later multi-host concern.
+
+## Feature snapshots
+
+Model and risk daemons should not scan raw XBRL facts or re-infer accounting semantics at execution time. The slow evidence path should materialize immutable model-ready inputs:
+
+```text
+canonical_observations -> feature_snapshots -> model_runs
+```
+
+A feature snapshot should be point-in-time safe and hashable:
+
+```text
+feature_snapshot_id
+universe_snapshot_id
+as_of_time
+feature_version
+input_observation_hash
+created_at
+```
+
+`pland` and `value` should eventually consume a `feature_snapshot_id`. SEC parsing, canonicalization, and feature building stay on the slow path; staging and submission stay on the fast authority path.
+
+## Broker lifecycle
+
+`submitd` is a trust boundary, not just another worker. It should run with broker credentials on an isolated host and should not ingest SEC data, run models, or make discretionary decisions.
+
+Before live broker integration, add explicit evidence tables for:
+
+```text
+broker_orders
+broker_fills
+broker_account_snapshots
+broker_position_snapshots
+```
+
+Broker submission must use stable client order identifiers so retries are safe after crashes. Reconciliation must be able to discover broker-side orders and fills even if `submitd` dies after placing an order but before writing the local acknowledgement.
+
+## Verification and replay
+
+Daemon reliability depends on executable invariants, not only documented intent. Add verification commands before adding live authority:
+
+```text
+sec verify db
+sec verify raw-store
+sec verify work
+sec verify broker
+sec verify lineage
+```
+
+The important checks are:
+
+```text
+no staged order without an approved risk decision
+no broker order without a staged order
+no fill without a broker order
+no canonical observation without source fact lineage
+no model run without an input hash
+no live submission without fresh reconciliation
+no duplicate client order id
+no dead work item that still holds a lease
+```
+
+Replay/rebuild commands should reconstruct derived state from raw evidence after parser, feature, or model fixes:
+
+```text
+sec replay accession
+sec rebuild canonical
+sec rebuild features
+sec replay model-run
+```
+
 ## Example local process group
 
 ```sh
