@@ -1,6 +1,7 @@
 #include "core.h"
 
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 
@@ -14,6 +15,10 @@ void require(bool condition) {
 
 double absd(double value) {
     return value < 0.0 ? -value : value;
+}
+
+bool contains(const char* text, const char* needle) {
+    return std::strstr(text, needle) != nullptr;
 }
 
 fa_security_v1 security(uint64_t id, const char* symbol, double price, double adv) {
@@ -66,31 +71,23 @@ fa_valuation_scenario_v1 scenario(double revenue_cagr,
     return scenario;
 }
 
-}  // namespace
+fa_position_v1 position(uint64_t security_id, double weight_ratio) {
+    fa_position_v1 pos{};
+    pos.abi_version = FA_ABI_VERSION;
+    pos.security_id = security_id;
+    pos.quantity_shares = 0.0;
+    pos.market_value_usd = 0.0;
+    pos.weight_ratio = weight_ratio;
+    return pos;
+}
 
-int main() {
-    fa_security_v1 securities[1] = {
-        security(1, "AAA", 10.0, 50000000.0),
-    };
+void standard_scenarios(fa_valuation_scenario_v1* scenarios) {
+    scenarios[0] = scenario(0.00, 0.00, 0.08, 0.12, 10.0, 0.25);
+    scenarios[1] = scenario(0.04, 0.02, 0.12, 0.10, 16.0, 0.50);
+    scenarios[2] = scenario(0.08, 0.03, 0.16, 0.09, 20.0, 0.25);
+}
 
-    fa_statement_snapshot_v1 statements[2] = {
-        statement(1, 19365),
-        statement(1, 19000),
-    };
-
-    fa_position_v1 positions[1] = {};
-    positions[0].abi_version = FA_ABI_VERSION;
-    positions[0].security_id = 1;
-    positions[0].quantity_shares = 0.0;
-    positions[0].market_value_usd = 0.0;
-    positions[0].weight_ratio = 0.0;
-
-    fa_valuation_scenario_v1 scenarios[3] = {
-        scenario(0.00, 0.00, 0.08, 0.12, 10.0, 0.25),
-        scenario(0.04, 0.02, 0.12, 0.10, 16.0, 0.50),
-        scenario(0.08, 0.03, 0.16, 0.09, 20.0, 0.25),
-    };
-
+fa_model_config_v1 model_config() {
     fa_model_config_v1 config{};
     config.abi_version = FA_ABI_VERSION;
     config.target_gross_exposure_ratio = 0.50;
@@ -99,7 +96,10 @@ int main() {
     config.min_abs_order_notional_usd = 100.0;
     config.max_forecast_abs_growth_ratio = 2.0;
     config.max_fact_age_s = 0;
+    return config;
+}
 
+fa_risk_limits_v1 fresh_limits() {
     fa_risk_limits_v1 limits{};
     limits.abi_version = FA_ABI_VERSION;
     limits.portfolio_value_usd = 100000.0;
@@ -113,6 +113,26 @@ int main() {
     limits.reconciliation_checked_at_epoch_s = 1800000000;
     limits.now_epoch_s = 1800000100;
     limits.max_reconciliation_age_s = 3600;
+    return limits;
+}
+
+void test_value_happy_path() {
+    fa_security_v1 securities[1] = {
+        security(1, "AAA", 10.0, 50000000.0),
+    };
+
+    fa_statement_snapshot_v1 statements[2] = {
+        statement(1, 19365),
+        statement(1, 19000),
+    };
+
+    fa_position_v1 positions[1] = { position(1, 0.0) };
+
+    fa_valuation_scenario_v1 scenarios[3]{};
+    standard_scenarios(scenarios);
+
+    fa_model_config_v1 config = model_config();
+    fa_risk_limits_v1 limits = fresh_limits();
 
     fa_value_output_v1 output{};
     const fa_status_code status = fa_value_v1(
@@ -132,5 +152,101 @@ int main() {
     require(absd(output.order_intents[0].notional_usd - 10000.0) < 1.0);
 
     fa_value_output_free_v1(&output);
+}
+
+void test_value_rejects_missing_or_invalid_scenarios() {
+    fa_security_v1 securities[1] = {
+        security(1, "AAA", 10.0, 50000000.0),
+    };
+    fa_statement_snapshot_v1 statements[1] = {
+        statement(1, 19365),
+    };
+    fa_model_config_v1 config = model_config();
+    fa_risk_limits_v1 limits = fresh_limits();
+
+    fa_value_output_v1 missing{};
+    fa_status_code status =
+        fa_value_v1(statements, 1u, securities, 1u, nullptr, 0u, nullptr, 0u,
+                    &config, &limits, &missing);
+    require(status == FA_ERR_INVALID_INPUT);
+    require(contains(missing.diagnostics, "at least one valuation scenario is required"));
+    fa_value_output_free_v1(&missing);
+
+    fa_valuation_scenario_v1 invalid[1] = {
+        scenario(0.04, 0.02, 0.12, 0.01, 16.0, 1.00),
+    };
+    fa_value_output_v1 bad{};
+    status = fa_value_v1(statements, 1u, securities, 1u, nullptr, 0u, invalid, 1u,
+                         &config, &limits, &bad);
+    require(status == FA_ERR_INVALID_INPUT);
+    require(contains(bad.diagnostics, "invalid valuation scenario"));
+    fa_value_output_free_v1(&bad);
+}
+
+void test_value_filters_stale_statements() {
+    fa_security_v1 securities[1] = {
+        security(1, "AAA", 10.0, 50000000.0),
+    };
+    fa_statement_snapshot_v1 statements[2] = {
+        statement(1, 19365),
+        statement(1, 19000),
+    };
+    fa_valuation_scenario_v1 scenarios[3]{};
+    standard_scenarios(scenarios);
+    fa_model_config_v1 config = model_config();
+    config.max_fact_age_s = 3600;
+    fa_risk_limits_v1 limits = fresh_limits();
+
+    fa_value_output_v1 output{};
+    const fa_status_code status =
+        fa_value_v1(statements, 2u, securities, 1u, nullptr, 0u, scenarios, 3u,
+                    &config, &limits, &output);
+    require(status == FA_OK);
+    require(output.valuation_count == 1u);
+    require(output.target_weight_count == 1u);
+    require(output.order_intent_count == 0u);
+    require(output.valuations[0].confidence_ratio == 0.0);
+    require(contains(output.valuations[0].reason, "missing usable statement"));
+    require(output.target_weights[0].target_weight_ratio == 0.0);
+    fa_value_output_free_v1(&output);
+}
+
+void test_value_low_confidence_statement_does_not_create_intent() {
+    fa_security_v1 securities[1] = {
+        security(1, "AAA", 10.0, 50000000.0),
+    };
+    fa_statement_snapshot_v1 statements[2] = {
+        statement(1, 19365),
+        statement(1, 19000),
+    };
+    statements[0].quality_flags = FA_STMT_LOW_CONFIDENCE | FA_STMT_AMENDED_OR_RESTATED;
+
+    fa_valuation_scenario_v1 scenarios[3]{};
+    standard_scenarios(scenarios);
+    fa_model_config_v1 config = model_config();
+    fa_risk_limits_v1 limits = fresh_limits();
+
+    fa_value_output_v1 output{};
+    const fa_status_code status =
+        fa_value_v1(statements, 2u, securities, 1u, nullptr, 0u, scenarios, 3u,
+                    &config, &limits, &output);
+    require(status == FA_OK);
+    require(output.valuation_count == 1u);
+    require(output.target_weight_count == 1u);
+    require(output.order_intent_count == 0u);
+    require(output.valuations[0].expected_return_ratio > 0.0);
+    require(output.valuations[0].confidence_ratio < 0.50);
+    require((output.valuations[0].quality_flags & FA_STMT_LOW_CONFIDENCE) != 0u);
+    require(output.target_weights[0].target_weight_ratio == 0.0);
+    fa_value_output_free_v1(&output);
+}
+
+}  // namespace
+
+int main() {
+    test_value_happy_path();
+    test_value_rejects_missing_or_invalid_scenarios();
+    test_value_filters_stale_statements();
+    test_value_low_confidence_statement_does_not_create_intent();
     return 0;
 }
