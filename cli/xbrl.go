@@ -73,18 +73,27 @@ type rawFact struct {
 	DimensionsJSON   string
 }
 
+type filingFiscalMetadata struct {
+	FiscalYearFocus      sql.NullInt64
+	FiscalPeriodFocus    sql.NullString
+	FiscalPeriodOrdinal  sql.NullInt64
+	DocumentPeriodEnd    sql.NullString
+	CurrentFiscalYearEnd sql.NullString
+}
+
 func cmdXBRLParse(args []string) error {
 	fs := newFlagSet("xbrl")
-	dbPath := fs.String("db", "", "")
+	dbPath := fs.String("db", defaultDBPath, "")
 	accession := fs.String("accession", "", "")
 	cik := fs.String("cik", "", "")
 	symbol := fs.String("symbol", "", "")
-	form := fs.String("form", "10-Q", "")
+	form := fs.String("form", "", "")
 	filedAt := fs.String("filed-at", "", "")
 	acceptedAt := fs.String("accepted-at", "", "")
 	rawRoot := fs.String("raw-root", "raw", "")
 	packageRoot := fs.String("package-root", "", "")
-	userAgent := fs.String("user-agent", defaultUserAgent, "")
+	userAgent := fs.String("user-agent", "", "")
+	latest := fs.Bool("latest", false, "")
 	sleepS := fs.Float64("sleep-s", 0, "")
 	strict := fs.Bool("strict", false, "")
 	if err := parseFlags(fs, args); err != nil {
@@ -94,9 +103,6 @@ func cmdXBRLParse(args []string) error {
 	_ = userAgent
 	_ = sleepS
 	_ = strict
-	if *dbPath == "" || *accession == "" || *cik == "" {
-		return fail(2, "--db, --accession, and --cik are required")
-	}
 	db, err := openDB(*dbPath)
 	if err != nil {
 		return err
@@ -105,7 +111,45 @@ func cmdXBRLParse(args []string) error {
 	if err := ensureDB(db); err != nil {
 		return err
 	}
+	var meta filingMetadata
+	var found bool
+	if *accession == "" {
+		if !*latest {
+			return fail(2, "--accession is required unless --latest is set")
+		}
+		meta, found, err = latestFetchedFilingMetadata(db, *cik)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fail(2, "no fetched filing found; run watch and pull first or pass --accession")
+		}
+		*accession = meta.Accession
+	} else {
+		meta, found, err = lookupFilingMetadata(db, *accession)
+		if err != nil {
+			return err
+		}
+	}
+	if *cik == "" && found {
+		*cik = meta.CIK
+	}
+	if *cik == "" {
+		return fail(2, "--cik is required when accession metadata is not present; run watch first or pass --cik")
+	}
 	cik10 := normalizeCIK(*cik)
+	if *form == "" && found {
+		*form = meta.Form
+	}
+	if *form == "" {
+		*form = "10-Q"
+	}
+	if *filedAt == "" && found && meta.FilingDate.Valid {
+		*filedAt = meta.FilingDate.String
+	}
+	if *acceptedAt == "" && found && meta.AcceptedAt.Valid {
+		*acceptedAt = meta.AcceptedAt.String
+	}
 	securityID, _ := strconv.ParseInt(cik10, 10, 64)
 	if *acceptedAt == "" {
 		*acceptedAt = utcNow()
@@ -117,7 +161,7 @@ func cmdXBRLParse(args []string) error {
 	if root == "" {
 		root = filepath.Join(*rawRoot, cik10, strings.ReplaceAll(*accession, "-", ""))
 	}
-	files, err := loadPackageFiles(root, cik10, *accession, *rawRoot)
+	files, err := loadPackageFiles(root, cik10, *accession, *rawRoot, meta.PrimaryDocumentString())
 	if err != nil {
 		return err
 	}
@@ -135,7 +179,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, *accession, cik10, *form, *filedAt, *acceptedAt, 
 	documentsStored := 0
 	rawInserted := 0
 	selectedInserted := 0
-	var parseErrors []string
+	parseErrors := []string{}
 	contexts := map[string]contextInfo{}
 	units := map[string]unitInfo{}
 
@@ -159,6 +203,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			continue
 		}
 		docContexts := parseContexts(root)
+		fiscalMeta := parseFilingFiscalMetadata(root)
+		applyFilingFiscalMetadata(docContexts, fiscalMeta)
 		for id, ctx := range docContexts {
 			contexts[id] = ctx
 		}
@@ -220,6 +266,57 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return jsonLine(event)
 }
 
+type filingMetadata struct {
+	Accession       string
+	CIK             string
+	Form            string
+	FilingDate      sql.NullString
+	AcceptedAt      sql.NullString
+	PrimaryDocument sql.NullString
+}
+
+func (m filingMetadata) PrimaryDocumentString() string {
+	if m.PrimaryDocument.Valid {
+		return m.PrimaryDocument.String
+	}
+	return ""
+}
+
+func lookupFilingMetadata(db *sql.DB, accession string) (filingMetadata, bool, error) {
+	var meta filingMetadata
+	err := db.QueryRow(`SELECT accession_number, cik, form, filing_date, accepted_at, primary_document
+FROM filings WHERE accession_number=?`, accession).Scan(
+		&meta.Accession, &meta.CIK, &meta.Form, &meta.FilingDate, &meta.AcceptedAt, &meta.PrimaryDocument)
+	if err == sql.ErrNoRows {
+		return filingMetadata{}, false, nil
+	}
+	if err != nil {
+		return filingMetadata{}, false, err
+	}
+	return meta, true, nil
+}
+
+func latestFetchedFilingMetadata(db *sql.DB, cik string) (filingMetadata, bool, error) {
+	query := `SELECT accession_number, cik, form, filing_date, accepted_at, primary_document
+FROM filings WHERE raw_index_uri IS NOT NULL`
+	var args []any
+	if cik != "" {
+		query += ` AND cik=?`
+		args = append(args, normalizeCIK(cik))
+	}
+	query += ` ORDER BY filing_date DESC, accepted_at DESC LIMIT 1`
+	var meta filingMetadata
+	err := db.QueryRow(query, args...).Scan(
+		&meta.Accession, &meta.CIK, &meta.Form, &meta.FilingDate, &meta.AcceptedAt, &meta.PrimaryDocument)
+	if err == sql.ErrNoRows {
+		return filingMetadata{}, false, nil
+	}
+	if err != nil {
+		return filingMetadata{}, false, err
+	}
+	return meta, true, nil
+}
+
 type packageFile struct {
 	Name string
 	Path string
@@ -229,7 +326,7 @@ type packageFile struct {
 	Data []byte
 }
 
-func loadPackageFiles(packageRoot, cik, accession, rawRoot string) ([]packageFile, error) {
+func loadPackageFiles(packageRoot, cik, accession, rawRoot, primary string) ([]packageFile, error) {
 	var out []packageFile
 	if packageRoot == "" {
 		return nil, fail(2, "xbrl requires a fetched raw package under --raw-root or an explicit --package-root")
@@ -253,9 +350,15 @@ func loadPackageFiles(packageRoot, cik, accession, rawRoot string) ([]packageFil
 	if err := json.Unmarshal(indexData, &idx); err != nil {
 		return nil, err
 	}
+	hasExtractedInstance := false
+	for _, item := range idx.Directory.Item {
+		if isExtractedInlineInstanceName(item.Name) {
+			hasExtractedInstance = true
+		}
+	}
 	for _, item := range idx.Directory.Item {
 		name := item.Name
-		if !isXBRLRelevantName(name) {
+		if !isPackageArtifactName(name, primary) {
 			continue
 		}
 		path := filepath.Join(packageRoot, name)
@@ -263,22 +366,39 @@ func loadPackageFiles(packageRoot, cik, accession, rawRoot string) ([]packageFil
 		if err != nil {
 			return nil, err
 		}
-		kind := "xbrl_instance"
-		if strings.HasSuffix(strings.ToLower(name), ".htm") || strings.HasSuffix(strings.ToLower(name), ".html") {
-			kind = "inline_xbrl"
-		}
 		out = append(out, packageFile{
-			Name: name, Path: path, URL: archiveURL(cik, accession, name), Hash: sha256Hex(data), Kind: kind, Data: data,
+			Name: name, Path: path, URL: archiveURL(cik, accession, name), Hash: sha256Hex(data), Kind: packageFileKind(name, primary, hasExtractedInstance), Data: data,
 		})
 	}
 	_ = rawRoot
 	return out, nil
 }
 
-func isXBRLRelevantName(name string) bool {
+func packageFileKind(name, primary string, hasExtractedInstance bool) string {
 	lower := strings.ToLower(name)
-	return strings.HasSuffix(lower, ".xml") || strings.HasSuffix(lower, ".htm") || strings.HasSuffix(lower, ".html")
+	if strings.HasSuffix(lower, ".htm") || strings.HasSuffix(lower, ".html") {
+		if hasExtractedInstance && name == primary {
+			return "primary_document"
+		}
+		return "inline_xbrl"
+	}
+	if strings.HasSuffix(lower, ".xsd") {
+		return "xbrl_schema"
+	}
+	if strings.HasSuffix(lower, "_lab.xml") || strings.HasSuffix(lower, "_pre.xml") ||
+		strings.HasSuffix(lower, "_def.xml") || strings.HasSuffix(lower, "_cal.xml") {
+		return "xbrl_linkbase"
+	}
+	if lower == "filingsummary.xml" || lower == "metalinks.json" {
+		return "xbrl_report_metadata"
+	}
+	return "xbrl_instance"
 }
+
+func isExtractedInlineInstanceName(name string) bool {
+	return strings.HasSuffix(strings.ToLower(name), "_htm.xml")
+}
+
 func parseContexts(root *xmlNode) map[string]contextInfo {
 	var nodes []*xmlNode
 	descendants(root, "context", &nodes)
@@ -318,6 +438,84 @@ func parseContexts(root *xmlNode) map[string]contextInfo {
 	return out
 }
 
+func parseFilingFiscalMetadata(root *xmlNode) filingFiscalMetadata {
+	var nodes []*xmlNode
+	descendants(root, "", &nodes)
+	var out filingFiscalMetadata
+	for _, n := range nodes {
+		concept := ""
+		if name := attr(n, "name"); name != "" {
+			_, concept = splitQName(name)
+		} else if taxonomyForSpace(n.Name.Space) == "dei" {
+			concept = n.Name.Local
+		}
+		if concept == "" {
+			continue
+		}
+		value := strings.TrimSpace(text(n))
+		switch concept {
+		case "DocumentFiscalYearFocus":
+			if year, ok := parseIntegerText(value); ok {
+				out.FiscalYearFocus = sql.NullInt64{Int64: int64(year), Valid: true}
+			}
+		case "DocumentFiscalPeriodFocus":
+			period := normalizeFiscalPeriod(value)
+			if period != "" {
+				out.FiscalPeriodFocus = sql.NullString{String: period, Valid: true}
+				if ordinal := fiscalQuarterOrdinal(period); ordinal > 0 {
+					out.FiscalPeriodOrdinal = sql.NullInt64{Int64: int64(ordinal), Valid: true}
+				}
+			}
+		case "DocumentPeriodEndDate":
+			if isDate(value) {
+				out.DocumentPeriodEnd = sql.NullString{String: value, Valid: true}
+			}
+		case "CurrentFiscalYearEndDate":
+			if value != "" {
+				out.CurrentFiscalYearEnd = sql.NullString{String: value, Valid: true}
+			}
+		}
+	}
+	return out
+}
+
+func applyFilingFiscalMetadata(contexts map[string]contextInfo, meta filingFiscalMetadata) {
+	if !meta.FiscalYearFocus.Valid || !meta.FiscalPeriodFocus.Valid || !meta.FiscalPeriodOrdinal.Valid || !meta.DocumentPeriodEnd.Valid {
+		return
+	}
+	for id, ctx := range contexts {
+		p := ctx.Period
+		end := ""
+		if p.RawEndDate.Valid {
+			end = p.RawEndDate.String
+		} else if p.RawInstantDate.Valid {
+			end = p.RawInstantDate.String
+		}
+		if end == "" {
+			continue
+		}
+		year, ok := comparableFiscalYear(end, meta.DocumentPeriodEnd.String, int(meta.FiscalYearFocus.Int64))
+		if !ok {
+			continue
+		}
+		p.FiscalYear = sql.NullInt64{Int64: int64(year), Valid: true}
+		if p.PeriodKind == "duration" {
+			ordinal := int(meta.FiscalPeriodOrdinal.Int64)
+			if isFiscalYTDDuration(p.DurationDays, ordinal) {
+				p.PeriodSemantics = "fiscal_ytd"
+				p.FiscalPeriod = meta.FiscalPeriodFocus
+				p.FiscalPeriodOrdinal = meta.FiscalPeriodOrdinal
+			} else if isQuarterDuration(p.DurationDays) {
+				p.PeriodSemantics = "fiscal_quarter"
+				p.FiscalPeriod = meta.FiscalPeriodFocus
+				p.FiscalPeriodOrdinal = meta.FiscalPeriodOrdinal
+			}
+		}
+		ctx.Period = p
+		contexts[id] = ctx
+	}
+}
+
 func parsePeriod(period *xmlNode) periodInfo {
 	start := text(child(period, "startDate"))
 	end := text(child(period, "endDate"))
@@ -345,7 +543,7 @@ func parsePeriod(period *xmlNode) periodInfo {
 	p.DurationDays = durationDays(start, end)
 	p.PeriodLengthClass = periodLengthClass(p.DurationDays)
 	p.PeriodSemantics = "irregular"
-	if p.DurationDays >= 70 && p.DurationDays <= 110 {
+	if isQuarterDuration(p.DurationDays) {
 		p.PeriodSemantics = "fiscal_quarter"
 	}
 	if p.DurationDays >= 330 {
@@ -362,6 +560,89 @@ func parsePeriod(period *xmlNode) periodInfo {
 		p.FiscalPeriodOrdinal = sql.NullInt64{Int64: int64(q), Valid: true}
 	}
 	return p
+}
+
+func parseIntegerText(value string) (int, bool) {
+	clean := strings.TrimSpace(value)
+	if clean == "" {
+		return 0, false
+	}
+	if strings.Contains(clean, ".") {
+		if v, err := strconv.ParseFloat(clean, 64); err == nil {
+			return int(v), true
+		}
+	}
+	v, err := strconv.Atoi(clean)
+	return v, err == nil
+}
+
+func normalizeFiscalPeriod(value string) string {
+	clean := strings.ToUpper(strings.TrimSpace(value))
+	if clean == "" {
+		return ""
+	}
+	if ordinal := fiscalQuarterOrdinal(clean); ordinal > 0 {
+		return fmt.Sprintf("Q%d", ordinal)
+	}
+	return clean
+}
+
+func fiscalQuarterOrdinal(period string) int {
+	switch strings.ToUpper(strings.TrimSpace(period)) {
+	case "Q1", "1":
+		return 1
+	case "Q2", "2":
+		return 2
+	case "Q3", "3":
+		return 3
+	case "Q4", "4":
+		return 4
+	default:
+		return 0
+	}
+}
+
+func isDate(value string) bool {
+	_, err := parseDate(value)
+	return err == nil
+}
+
+func comparableFiscalYear(periodEnd, documentEnd string, documentFiscalYear int) (int, bool) {
+	endDate, err := parseDate(periodEnd)
+	if err != nil {
+		return 0, false
+	}
+	docDate, err := parseDate(documentEnd)
+	if err != nil {
+		return 0, false
+	}
+	yearDelta := docDate.Year() - endDate.Year()
+	if yearDelta < 0 || yearDelta > 10 {
+		return 0, false
+	}
+	shifted := endDate.AddDate(yearDelta, 0, 0)
+	if absDays(shifted.Sub(docDate).Hours()/24) > 10 {
+		return 0, false
+	}
+	return documentFiscalYear - yearDelta, true
+}
+
+func absDays(days float64) float64 {
+	if days < 0 {
+		return -days
+	}
+	return days
+}
+
+func isQuarterDuration(days int) bool {
+	return days >= 70 && days <= 110
+}
+
+func isFiscalYTDDuration(days, fiscalQuarter int) bool {
+	if fiscalQuarter <= 1 {
+		return false
+	}
+	return days >= fiscalQuarter*70 && days <= fiscalQuarter*110
 }
 
 func quarterFromEnd(date string) int {

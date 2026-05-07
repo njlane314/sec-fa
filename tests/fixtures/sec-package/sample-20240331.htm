@@ -9,20 +9,26 @@
   <head><title>sample</title></head>
   <body>
     <div style="display:none">
-      <xbrli:context id="D2024Q1">
+      <xbrli:context id="D2024Q2">
         <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000000003</xbrli:identifier></xbrli:entity>
         <xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-03-31</xbrli:endDate></xbrli:period>
       </xbrli:context>
-      <xbrli:context id="I2024Q1">
+      <xbrli:context id="D2024YTD">
+        <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000000003</xbrli:identifier></xbrli:entity>
+        <xbrli:period><xbrli:startDate>2023-10-01</xbrli:startDate><xbrli:endDate>2024-03-31</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <xbrli:context id="I2024Q2">
         <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000000003</xbrli:identifier></xbrli:entity>
         <xbrli:period><xbrli:instant>2024-03-31</xbrli:instant></xbrli:period>
       </xbrli:context>
       <xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>
     </div>
-    <p>Revenue <ix:nonFraction name="us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax" contextRef="D2024Q1" unitRef="usd" decimals="-6" scale="6">123</ix:nonFraction></p>
-    <p>Net income <ix:nonFraction name="us-gaap:NetIncomeLoss" contextRef="D2024Q1" unitRef="usd" decimals="-6" scale="6">12</ix:nonFraction></p>
-    <p>Year <ix:nonNumeric name="dei:DocumentFiscalYearFocus" contextRef="D2024Q1">2024</ix:nonNumeric></p>
-    <p>Period <ix:nonNumeric name="dei:DocumentFiscalPeriodFocus" contextRef="D2024Q1">Q1</ix:nonNumeric></p>
-    <p>End <ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="I2024Q1">2024-03-31</ix:nonNumeric></p>
+    <p>Revenue <ix:nonFraction name="us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax" contextRef="D2024Q2" unitRef="usd" decimals="-6" scale="6">123</ix:nonFraction></p>
+    <p>YTD revenue <ix:nonFraction name="us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax" contextRef="D2024YTD" unitRef="usd" decimals="-6" scale="6">220</ix:nonFraction></p>
+    <p>Net income <ix:nonFraction name="us-gaap:NetIncomeLoss" contextRef="D2024Q2" unitRef="usd" decimals="-6" scale="6">12</ix:nonFraction></p>
+    <p>Year <ix:nonNumeric name="dei:DocumentFiscalYearFocus" contextRef="D2024Q2">2024</ix:nonNumeric></p>
+    <p>Period <ix:nonNumeric name="dei:DocumentFiscalPeriodFocus" contextRef="D2024Q2">Q2</ix:nonNumeric></p>
+    <p>Fiscal year end <ix:nonNumeric name="dei:CurrentFiscalYearEndDate" contextRef="I2024Q2">--09-30</ix:nonNumeric></p>
+    <p>End <ix:nonNumeric name="dei:DocumentPeriodEndDate" contextRef="I2024Q2">2024-03-31</ix:nonNumeric></p>
   </body>
 </html>

@@ -17,6 +17,14 @@ type xmlNode struct {
 
 func parseXMLTree(data []byte) (*xmlNode, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
+	dec.CharsetReader = func(charset string, input io.Reader) (io.Reader, error) {
+		switch strings.ToLower(strings.TrimSpace(charset)) {
+		case "", "utf-8", "us-ascii", "ascii":
+			return input, nil
+		default:
+			return nil, errors.New("unsupported XML charset: " + charset)
+		}
+	}
 	var stack []*xmlNode
 	var root *xmlNode
 	for {

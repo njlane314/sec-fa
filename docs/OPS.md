@@ -42,27 +42,28 @@ In the starter implementation, `security_id` is the integer CIK. A production se
 Declare a real User-Agent. The SEC fair-access guidance requires a declared User-Agent and rate moderation.
 
 ```sh
+export SEC_USER_AGENT="Your Company admin@example.com"
+
 ./sec watch --db /var/lib/sec/sec.db \
   --cik 0000320193 \
-  --user-agent "Your Company admin@example.com"
+  --limit 1
 
 ./sec pull --db /var/lib/sec/sec.db \
   --raw-root /var/lib/sec/raw \
-  --user-agent "Your Company admin@example.com"
+  --cik 0000320193 \
+  --limit 1
 ```
 
 ## 5. XBRL package parsing
 
 ```sh
 ./sec xbrl --db /var/lib/sec/sec.db \
-  --accession 0000320193-24-000123 \
+  --latest \
   --cik 0000320193 \
-  --symbol AAPL \
-  --raw-root /var/lib/sec/raw \
-  --user-agent "Your Company admin@example.com"
+  --raw-root /var/lib/sec/raw
 ```
 
-The parser reads the SEC accession `index.json`, stores XBRL-relevant package artifacts unchanged, parses inline-XBRL and classic-XBRL contexts, units, dimensions, and raw facts, then invokes the canonical observation resolver. Companyfacts remains a design fallback, but the Go CLI's primary path is accession XBRL.
+`watch` records filing metadata from SEC submissions, `pull` reads the SEC accession `index.json` and stores XBRL-relevant package artifacts unchanged, and `xbrl` infers form, filing date, acceptance time, and primary document from the stored filing row. The parser then parses inline-XBRL and classic-XBRL contexts, units, dimensions, and raw facts before invoking the canonical observation resolver. Companyfacts remains a design fallback, but the Go CLI's primary path is accession XBRL.
 
 ## 6. Reconciliation snapshot
 

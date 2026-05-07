@@ -8,18 +8,24 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func cmdSecWatch(args []string) error {
 	fs := newFlagSet("watch")
-	dbPath := fs.String("db", "", "")
+	dbPath := fs.String("db", defaultDBPath, "")
 	cik := fs.String("cik", "", "")
-	userAgent := fs.String("user-agent", defaultUserAgent, "")
+	userAgent := fs.String("user-agent", "", "")
 	limit := fs.Int("limit", 40, "")
+	forms := fs.String("forms", defaultWatchForms, "")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if *cik == "" {
+		return fail(2, "--cik is required")
 	}
 	db, err := openDB(*dbPath)
 	if err != nil {
@@ -30,7 +36,7 @@ func cmdSecWatch(args []string) error {
 		return err
 	}
 	cik10 := normalizeCIK(*cik)
-	body, err := httpGet(fmt.Sprintf("https://data.sec.gov/submissions/CIK%s.json", cik10), *userAgent)
+	body, err := httpGet(fmt.Sprintf("https://data.sec.gov/submissions/CIK%s.json", cik10), effectiveUserAgent(*userAgent))
 	if err != nil {
 		return err
 	}
@@ -49,6 +55,7 @@ func cmdSecWatch(args []string) error {
 		}
 		return fmt.Sprint(values[i])
 	}
+	allowedForms := parseFormSet(*forms)
 	accessions := payload.Filings.Recent["accessionNumber"]
 	tx, err := db.Begin()
 	if err != nil {
@@ -59,7 +66,7 @@ func cmdSecWatch(args []string) error {
 	for i := 0; i < len(accessions) && emitted < *limit; i++ {
 		accession := get("accessionNumber", i)
 		form := get("form", i)
-		if accession == "" || (form != "10-K" && form != "10-Q" && form != "10-K/A" && form != "10-Q/A") {
+		if accession == "" || !formAllowed(allowedForms, form) {
 			continue
 		}
 		primary := get("primaryDocument", i)
@@ -86,11 +93,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, accession, cik10, form, get("filingDate", i), 
 
 func cmdSecFetch(args []string) error {
 	fs := newFlagSet("pull")
-	dbPath := fs.String("db", "", "")
+	dbPath := fs.String("db", defaultDBPath, "")
 	rawRoot := fs.String("raw-root", "raw", "")
-	userAgent := fs.String("user-agent", defaultUserAgent, "")
+	userAgent := fs.String("user-agent", "", "")
 	accessionFilter := fs.String("accession", "", "")
+	cikFilter := fs.String("cik", "", "")
 	limit := fs.Int("limit", 20, "")
+	sleepS := fs.Float64("sleep-s", 0.15, "")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -102,11 +111,14 @@ func cmdSecFetch(args []string) error {
 	if err := ensureDB(db); err != nil {
 		return err
 	}
-	query := `SELECT accession_number, cik, primary_document FROM filings WHERE raw_index_uri IS NULL OR raw_primary_uri IS NULL`
+	query := `SELECT accession_number, cik, primary_document FROM filings WHERE raw_index_uri IS NULL OR (coalesce(primary_document, '') != '' AND raw_primary_uri IS NULL)`
 	var qargs []any
 	if *accessionFilter != "" {
 		query = `SELECT accession_number, cik, primary_document FROM filings WHERE accession_number=?`
 		qargs = append(qargs, *accessionFilter)
+	} else if *cikFilter != "" {
+		query += ` AND cik=?`
+		qargs = append(qargs, normalizeCIK(*cikFilter))
 	}
 	query += ` ORDER BY filing_date DESC LIMIT ?`
 	qargs = append(qargs, *limit)
@@ -134,7 +146,7 @@ func cmdSecFetch(args []string) error {
 			return err
 		}
 		indexURL := archiveURL(cik10, accession, "")
-		indexData, err := httpGet(indexURL, *userAgent)
+		indexData, err := httpGet(indexURL, effectiveUserAgent(*userAgent))
 		if err != nil {
 			return err
 		}
@@ -143,23 +155,42 @@ func cmdSecFetch(args []string) error {
 			return err
 		}
 		primaryPath := ""
-		combined := sha256Hex(indexData)
-		if primary.Valid && primary.String != "" {
-			primaryURL := archiveURL(cik10, accession, primary.String)
-			primaryData, err := httpGet(primaryURL, *userAgent)
+		hashes := []string{sha256Hex(indexData)}
+		names, err := packageArtifactNames(indexData, nullableSQLString(primary))
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			path, err := archiveLocalPath(dir, name)
 			if err != nil {
 				return err
 			}
-			primaryPath = filepath.Join(dir, primary.String)
-			if err := os.WriteFile(primaryPath, primaryData, 0o644); err != nil {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				return err
 			}
-			combined = sha256Hex(append(indexData, primaryData...))
+			data, err := httpGet(archiveURL(cik10, accession, name), effectiveUserAgent(*userAgent))
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return err
+			}
+			hashes = append(hashes, sha256Hex(data))
+			if primary.Valid && name == primary.String {
+				primaryPath = path
+			}
+			if *sleepS > 0 {
+				time.Sleep(time.Duration(*sleepS * float64(time.Second)))
+			}
 		}
+		combined := sha256Hex([]byte(strings.Join(hashes, "\n")))
 		if _, err := tx.Exec(`UPDATE filings SET raw_index_uri=?, raw_primary_uri=?, raw_sha256=?, ingested_at=? WHERE accession_number=?`, indexPath, primaryPath, combined, utcNow(), accession); err != nil {
 			return err
 		}
-		event, err := appendEvent(tx, "filing_fetched", map[string]any{"accession_number": accession, "cik": cik10, "raw_index_uri": indexPath, "raw_primary_uri": primaryPath, "raw_sha256": combined})
+		event, err := appendEvent(tx, "filing_fetched", map[string]any{
+			"accession_number": accession, "cik": cik10, "raw_index_uri": indexPath,
+			"raw_primary_uri": primaryPath, "raw_sha256": combined, "package_file_count": len(names) + 1,
+		})
 		if err != nil {
 			return err
 		}
@@ -173,6 +204,97 @@ func cmdSecFetch(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "filing_fetched emitted=%d\n", fetched)
 	return nil
+}
+
+func parseFormSet(forms string) map[string]bool {
+	out := map[string]bool{}
+	for _, part := range strings.Split(forms, ",") {
+		form := strings.ToUpper(strings.TrimSpace(part))
+		if form == "" {
+			continue
+		}
+		if form == "*" || form == "ALL" {
+			out["*"] = true
+			continue
+		}
+		out[form] = true
+	}
+	return out
+}
+
+func formAllowed(forms map[string]bool, form string) bool {
+	if forms["*"] {
+		return true
+	}
+	return forms[strings.ToUpper(strings.TrimSpace(form))]
+}
+
+func effectiveUserAgent(userAgent string) string {
+	if strings.TrimSpace(userAgent) != "" {
+		return strings.TrimSpace(userAgent)
+	}
+	if env := strings.TrimSpace(os.Getenv("SEC_USER_AGENT")); env != "" {
+		return env
+	}
+	return defaultUserAgent
+}
+
+func packageArtifactNames(indexData []byte, primary string) ([]string, error) {
+	var idx struct {
+		Directory struct {
+			Item []struct {
+				Name string `json:"name"`
+			} `json:"item"`
+		} `json:"directory"`
+	}
+	if err := json.Unmarshal(indexData, &idx); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, item := range idx.Directory.Item {
+		name := item.Name
+		if !isPackageArtifactName(name, primary) {
+			continue
+		}
+		seen[name] = true
+	}
+	var out []string
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func isPackageArtifactName(name, primary string) bool {
+	if name == "" || filepath.IsAbs(name) || strings.Contains(filepath.Clean(name), "..") {
+		return false
+	}
+	lower := strings.ToLower(name)
+	if name == primary {
+		return true
+	}
+	if strings.HasSuffix(lower, ".xml") || strings.HasSuffix(lower, ".xsd") {
+		return true
+	}
+	if strings.HasSuffix(lower, ".htm") || strings.HasSuffix(lower, ".html") {
+		return primary == ""
+	}
+	return false
+}
+
+func archiveLocalPath(root, name string) (string, error) {
+	if name == "" || filepath.IsAbs(name) || strings.Contains(filepath.Clean(name), "..") {
+		return "", fail(2, "unsafe SEC archive item name: %s", name)
+	}
+	return filepath.Join(root, filepath.Clean(name)), nil
+}
+
+func nullableSQLString(value sql.NullString) string {
+	if value.Valid {
+		return value.String
+	}
+	return ""
 }
 
 func httpGet(url, userAgent string) ([]byte, error) {

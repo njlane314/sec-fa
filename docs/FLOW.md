@@ -95,23 +95,22 @@ This is analogous to creating a working tree before using `git`: later commands 
 ```sh
 DB=.fa.db
 RAW=raw
-UA="Your Name your.email@example.com"
+export SEC_USER_AGENT="Your Name your.email@example.com"
 
 ./sec watch --db "$DB" \
   --cik 0000320193 \
-  --user-agent "$UA" &&
+  --limit 1 &&
 ./sec pull --db "$DB" \
   --raw-root "$RAW" \
-  --user-agent "$UA" &&
-./sec xbrl --db "$DB" \
-  --accession 0000320193-24-000123 \
   --cik 0000320193 \
-  --symbol AAPL \
-  --raw-root "$RAW" \
-  --user-agent "$UA"
+  --limit 1 &&
+./sec xbrl --db "$DB" \
+  --latest \
+  --cik 0000320193 \
+  --raw-root "$RAW"
 ```
 
-`watch` discovers filing metadata. `pull` fetches the raw artifacts. `xbrl` turns one accession package into raw facts, periods, dimensions, and canonical observations.
+`watch` discovers filing metadata from the SEC submissions feed. `pull` fetches the raw package artifacts named by the accession `index.json`. `xbrl` uses the stored filing metadata, then turns one accession package into raw facts, periods, dimensions, and canonical observations.
 
 ## 5. Ingest several issuers, then build one universe
 

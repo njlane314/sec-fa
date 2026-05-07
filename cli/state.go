@@ -45,7 +45,7 @@ func ensureDB(db *sql.DB) error {
 	var name string
 	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='events'").Scan(&name)
 	if err != nil {
-		return fail(1, "database is not initialized; run `init --db <path>` first")
+		return fail(1, "database is not initialized; run `init` or `init --db <path>` first")
 	}
 	return nil
 }

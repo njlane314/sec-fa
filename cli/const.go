@@ -36,6 +36,7 @@ const (
 	resolverVersion             = "canonical_resolver_v3"
 	totalDimensionsJSON         = "{}"
 	defaultDBPath               = ".fa.db"
+	defaultWatchForms           = "10-K,10-Q,10-K/A,10-Q/A,8-K,8-K/A"
 	defaultUserAgent            = "sec-fa operator@example.invalid"
 	secArchiveBaseURL           = "https://www.sec.gov/Archives/edgar/data/%d/%s"
 	defaultScenarioAssumptionID = "default"

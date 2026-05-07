@@ -76,10 +76,13 @@ Not implemented by design in this first drop:
 cd sec-fa
 make check
 make setup-db
+export SEC_USER_AGENT="Your Name your.email@example.com"
 
 DB=.fa.db
 ./sec sym --db "$DB" --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
-./sec xbrl --db "$DB" --accession 0000320193-24-000123 --cik 0000320193 --symbol AAPL --raw-root raw --user-agent "Your Name your.email@example.com"
+./sec watch --db "$DB" --cik 0000320193 --limit 1
+./sec pull --db "$DB" --cik 0000320193 --limit 1
+./sec xbrl --db "$DB" --latest --cik 0000320193
 ./sec univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
 ./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
 ./sec plan --db "$DB" --core-lib build/libfolio.so --portfolio-value-usd 100000 --cash-usd 100000
@@ -92,6 +95,11 @@ On macOS the shared library is usually `build/libfolio.dylib`. On Linux it is `b
 For database setup only, use `make setup-db`. It creates or upgrades `.fa.db`.
 The equivalent direct CLI command is `./sec init`; pass `--db /path/to/file.db`
 when you need a specific database path.
+
+For SEC ingestion, `watch` chooses accessions from the official SEC submissions
+feed, `pull` chooses package files from the accession `index.json`, and `xbrl`
+uses the stored filing metadata. A real SEC User-Agent can be supplied once with
+`SEC_USER_AGENT` or per command with `--user-agent`.
 
 
 ## Accounting observation model

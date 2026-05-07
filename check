@@ -185,15 +185,18 @@ check_data_authority() {
   ge 'select count(*) from xbrl_units' 1
   ge 'select count(*) from dimension_signatures' 2
   eq "select count(*) from filings where accession_number='0000000003-24-000001' and cik='0000000003' and form='10-Q' and filing_date='2024-04-30' and accepted_at='2024-04-30T12:00:00Z'" 1
-  eq "select count(*) from xbrl_facts where accession_number='0000000003-24-000001'" 7
+  eq "select count(*) from xbrl_facts where accession_number='0000000003-24-000001'" 9
   eq "select count(*) from xbrl_facts where fact_id='' or security_id is null or cik='' or taxonomy='' or concept_qname='' or context_id='' or raw_fact_hash='' or available_at=''" 0
   eq "select count(*) from source_documents where length(sha256) != 64 or local_path='' or source_url=''" 0
   eq "select count(*) from xbrl_facts where length(raw_fact_hash) != 64" 0
-  eq "select count(*) from canonical_observations where security_id=3" 3
+  eq "select count(*) from canonical_observations where security_id=3" 4
   eq "select count(*) from canonical_observations where security_id=3 and dimensional_scope!='consolidated_total'" 0
+  eq "select count(*) from canonical_observations where security_id=3 and period_semantics='fiscal_quarter' and fiscal_year=2024 and fiscal_period='Q2'" 2
+  eq "select count(*) from canonical_observations where security_id=3 and period_semantics='fiscal_ytd' and fiscal_year=2024 and fiscal_period='Q2'" 1
+  eq "select count(*) from canonical_observations where security_id=3 and period_semantics='fiscal_quarter' and fiscal_period='Q1'" 0
   eq "select count(*) from canonical_observations where resolver_version='' or metric_name='' or metric_kind='' or basis_id is null or period_id='' or unit_signature='' or dimensions_hash='' or dimensional_scope='' or observation_status not in ('selected','derived','rejected','superseded') or available_at=''" 0
   eq "select count(*) from canonical_observations where metric_kind in ('flow','per_share_flow') and duration_days <= 0" 0
-  eq "select count(*) from events where event_type='xbrl_package_parsed' and json_extract(payload_json, '$.raw_facts_inserted')=7 and json_extract(payload_json, '$.canonical_selected_inserted')=3" 1
+  eq "select count(*) from events where event_type='xbrl_package_parsed' and json_extract(payload_json, '$.raw_facts_inserted')=9 and json_extract(payload_json, '$.canonical_selected_inserted')=4" 1
 }
 
 check_model_outputs() {
@@ -225,8 +228,8 @@ run_quiet sym --db "$DB" --cik 0000000001 --symbol AAA --price-usd 10 --adv-usd 
 run_quiet sym --db "$DB" --cik 0000000002 --symbol BBB --price-usd 100 --adv-usd 10000000 --investable 1
 run_quiet pos --db "$DB" --cik 0000000001 --quantity-shares 0 --market-value-usd 0 --weight-ratio 0
 
-run_quiet xbrl --db "$DB" --accession 0000000003-24-000001 --cik 0000000003 \
-  --form 10-Q --filed-at 2024-04-30 --accepted-at 2024-04-30T12:00:00Z \
+sqlite3 "$DB" "insert into filings(accession_number, cik, form, filing_date, accepted_at, primary_document, source_url, ingested_at) values ('0000000003-24-000001', '0000000003', '10-Q', '2024-04-30', '2024-04-30T12:00:00Z', 'sample-20240331.htm', 'fixture://sec-package/index.json', '2024-04-30T12:00:00Z')"
+run_quiet xbrl --db "$DB" --accession 0000000003-24-000001 \
   --raw-root "$TMPDIR/raw" --package-root tests/fixtures/sec-package --strict --sleep-s 0
 check_data_authority
 
