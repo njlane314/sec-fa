@@ -189,6 +189,10 @@ expect_exit 3 run_quiet send --db "$DB" --adapter mock
 eq 'select count(*) from broker_events' 0
 
 run_quiet mode --db "$DB" paper
+sqlite3 "$DB" "update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1;"
+expect_exit 4 run_quiet send --db "$DB" --adapter mock
+eq 'select count(*) from broker_events' 0
+run_quiet recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
 run_quiet send --db "$DB" --adapter mock
 eq 'select count(*) from broker_events' "$staged"
 eq "select count(*) from events where event_type='broker_order_submitted_mock'" "$staged"

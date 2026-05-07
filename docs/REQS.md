@@ -60,6 +60,9 @@ FA-MODEL-003
 
 FA-MODEL-004
   The model shall emit order intents, not broker orders.
+
+FA-MODEL-012
+  The C++ model core shall build valuation statement snapshots from canonical observations; Go shall not derive TTM flows or statement-quality flags for valuation.
 ```
 
 ## Ledger
@@ -79,7 +82,7 @@ FA-LEDGER-003
 
 ```text
 requirement_id | method                 | evidence
-FA-SAF-001     | C++ unit + CI smoke     | tests/test_core.cpp, check
+FA-SAF-001     | C++ unit + CI smoke     | tests/test_core.cpp, cli/cmd.go, check
 FA-SAF-002     | C++ unit + CI smoke     | tests/test_core.cpp, check
 FA-SAF-003     | C++ risk gate           | engine/gate.cpp
 FA-SAF-004     | C++ risk gate           | engine/gate.cpp
@@ -89,6 +92,7 @@ FA-SAF-008     | DB initialization check | schema.sql
 FA-MODEL-002   | code review + checks    | engine has no IO imports/calls
 FA-MODEL-003   | header inspection       | abi/core.h
 FA-MODEL-004   | ABI inspection          | fa_order_intent_v1 only
+FA-MODEL-012   | C++ unit + CLI path     | fa_build_statement_snapshots_v1, tests/test_valuation.cpp, check
 ```
 
 ## Accounting observation requirements

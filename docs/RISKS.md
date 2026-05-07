@@ -16,6 +16,7 @@ Controls:
 ```text
 risk gate requires fresh reconciliation
 risk gate rejects all intents if stale
+broker submitter rechecks reconciliation freshness before adapter submission
 order staging references risk decision
 daily report displays reconciliation state
 ```

@@ -4,7 +4,7 @@ package main
 #cgo CFLAGS: -I${SRCDIR}/../abi
 #include "core.h"
 
-typedef fa_status_code (*fa_value_v1_fn)(
+typedef fa_status_code (*fa_build_valuation_plan_v1_fn)(
     const fa_statement_snapshot_v1*, size_t,
     const fa_security_v1*, size_t,
     const fa_position_v1*, size_t,
@@ -13,8 +13,15 @@ typedef fa_status_code (*fa_value_v1_fn)(
     const fa_risk_limits_v1*,
     fa_value_output_v1*);
 typedef void (*fa_value_output_free_v1_fn)(fa_value_output_v1*);
+typedef fa_status_code (*fa_build_statement_snapshots_v1_fn)(
+    const fa_canonical_fact_v1*, size_t,
+    const fa_security_v1*, size_t,
+    const fa_model_config_v1*,
+    const fa_risk_limits_v1*,
+    fa_statement_build_output_v1*);
+typedef void (*fa_statement_build_output_free_v1_fn)(fa_statement_build_output_v1*);
 
-static fa_status_code sec_value_v1(
+static fa_status_code sec_build_valuation_plan_v1(
     void* fn,
     const fa_statement_snapshot_v1* statements, size_t statement_count,
     const fa_security_v1* securities, size_t security_count,
@@ -23,37 +30,34 @@ static fa_status_code sec_value_v1(
     const fa_model_config_v1* config,
     const fa_risk_limits_v1* risk_limits,
     fa_value_output_v1* output) {
-    return ((fa_value_v1_fn)fn)(
+    return ((fa_build_valuation_plan_v1_fn)fn)(
         statements, statement_count, securities, security_count, positions, position_count,
         scenarios, scenario_count, config, risk_limits, output);
 }
 static void sec_value_output_free_v1(void* fn, fa_value_output_v1* output) {
     ((fa_value_output_free_v1_fn)fn)(output);
 }
+static fa_status_code sec_build_statement_snapshots_v1(
+    void* fn,
+    const fa_canonical_fact_v1* facts, size_t fact_count,
+    const fa_security_v1* securities, size_t security_count,
+    const fa_model_config_v1* config,
+    const fa_risk_limits_v1* risk_limits,
+    fa_statement_build_output_v1* output) {
+    return ((fa_build_statement_snapshots_v1_fn)fn)(
+        facts, fact_count, securities, security_count, config, risk_limits, output);
+}
+static void sec_statement_build_output_free_v1(
+    void* fn, fa_statement_build_output_v1* output) {
+    ((fa_statement_build_output_free_v1_fn)fn)(output);
+}
 */
 import "C"
 
 import (
 	"database/sql"
-	"errors"
-	"fmt"
-	"strings"
 	"unsafe"
 )
-
-type statementSnapshot struct {
-	id                  string
-	securityID          uint64
-	periodStartDate     sql.NullString
-	periodEndDate       string
-	availableAt         string
-	revenue, netIncome  float64
-	eps, shares         float64
-	ocf, capex, fcf     float64
-	cash, debt, netDebt float64
-	qualityFlags        uint32
-	sourceHash          string
-}
 
 func cmdValue(args []string) error {
 	fs := modelFlagSet("value")
@@ -76,36 +80,6 @@ func cmdValue(args []string) error {
 	if err != nil {
 		return err
 	}
-	statements, err := buildLatestStatements(db)
-	if err != nil {
-		return err
-	}
-	cStatements := make([]C.fa_statement_snapshot_v1, 0, len(statements))
-	for _, s := range statements {
-		startDate := ""
-		if s.periodStartDate.Valid {
-			startDate = s.periodStartDate.String
-		}
-		cStatements = append(cStatements, C.fa_statement_snapshot_v1{
-			abi_version:             abiVersion,
-			security_id:             C.uint64_t(s.securityID),
-			period_start_day:        C.int64_t(epochDay(startDate)),
-			period_end_day:          C.int64_t(epochDay(s.periodEndDate)),
-			available_at_epoch_s:    C.int64_t(epochSecond(s.availableAt)),
-			is_ttm:                  1,
-			revenue_usd:             C.double(s.revenue),
-			net_income_usd:          C.double(s.netIncome),
-			diluted_eps_usd:         C.double(s.eps),
-			diluted_shares:          C.double(s.shares),
-			operating_cash_flow_usd: C.double(s.ocf),
-			capex_usd:               C.double(s.capex),
-			free_cash_flow_usd:      C.double(s.fcf),
-			cash_usd:                C.double(s.cash),
-			debt_usd:                C.double(s.debt),
-			net_debt_usd:            C.double(s.netDebt),
-			quality_flags:           C.uint32_t(s.qualityFlags),
-		})
-	}
 	securities, _, err := loadSecurities(db)
 	if err != nil {
 		return err
@@ -127,9 +101,25 @@ func cmdValue(args []string) error {
 	if err != nil {
 		return err
 	}
+	facts, err := loadFacts(db)
+	if err != nil {
+		return err
+	}
+	var statementOut C.fa_statement_build_output_v1
+	statementStatus := C.sec_build_statement_snapshots_v1(core.buildStmtsV1,
+		factPtr(facts), C.size_t(len(facts)),
+		securityPtr(securities), C.size_t(len(securities)),
+		&config, &limits, &statementOut)
+	statementDiagnostics := cCharArrayString(unsafe.Pointer(&statementOut.diagnostics[0]), diagnosticBytes)
+	if statementStatus != C.FA_OK {
+		C.sec_statement_build_output_free_v1(core.buildStmtsFreeV1, &statementOut)
+		return fail(5, "fa_build_statement_snapshots_v1 failed: %s: %s", core.status(statementStatus), statementDiagnostics)
+	}
+	defer C.sec_statement_build_output_free_v1(core.buildStmtsFreeV1, &statementOut)
+	statements := unsafe.Slice(statementOut.statements, int(statementOut.statement_count))
 	var out C.fa_value_output_v1
-	status := C.sec_value_v1(core.valueV1,
-		statementPtr(cStatements), C.size_t(len(cStatements)),
+	status := C.sec_build_valuation_plan_v1(core.buildValuationPlanV1,
+		statementPtr(statements), C.size_t(len(statements)),
 		securityPtr(securities), C.size_t(len(securities)),
 		positionPtr(positions), C.size_t(len(positions)),
 		scenarioPtr(scenarios), C.size_t(len(scenarios)),
@@ -137,7 +127,7 @@ func cmdValue(args []string) error {
 	diagnostics := cCharArrayString(unsafe.Pointer(&out.diagnostics[0]), diagnosticBytes)
 	if status != C.FA_OK {
 		C.sec_value_output_free_v1(core.valueFreeV1, &out)
-		return fail(5, "fa_value_v1 failed: %s: %s", core.status(status), diagnostics)
+		return fail(5, "fa_build_valuation_plan_v1 failed: %s: %s", core.status(status), diagnostics)
 	}
 	defer C.sec_value_output_free_v1(core.valueFreeV1, &out)
 	runID := uuidV4()
@@ -148,13 +138,22 @@ func cmdValue(args []string) error {
 	defer tx.Rollback()
 	insertedStatements := 0
 	for _, s := range statements {
+		startDate := dateFromEpochDay(int64(s.period_start_day))
+		endDate := dateFromEpochDay(int64(s.period_end_day))
+		availableAt := utcFromEpochSecond(int64(s.available_at_epoch_s))
+		if endDate == "" || availableAt == "" {
+			return fail(5, "C++ statement builder returned invalid statement date")
+		}
+		sourceHash := statementSnapshotSourceHash(s)
 		res, err := tx.Exec(`INSERT OR IGNORE INTO statement_snapshots(
-snapshot_id, security_id, period_start_date, period_end_date, available_at, is_ttm,
-revenue_usd, net_income_usd, diluted_eps_usd, diluted_shares, operating_cash_flow_usd,
-capex_usd, free_cash_flow_usd, cash_usd, debt_usd, net_debt_usd, quality_flags, source_hash, inserted_at)
-VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			s.id, s.securityID, nullableString(s.periodStartDate), s.periodEndDate, s.availableAt,
-			s.revenue, s.netIncome, s.eps, s.shares, s.ocf, s.capex, s.fcf, s.cash, s.debt, s.netDebt, s.qualityFlags, s.sourceHash, utcNow())
+	snapshot_id, security_id, period_start_date, period_end_date, available_at, is_ttm,
+	revenue_usd, net_income_usd, diluted_eps_usd, diluted_shares, operating_cash_flow_usd,
+	capex_usd, free_cash_flow_usd, cash_usd, debt_usd, net_debt_usd, quality_flags, source_hash, inserted_at)
+	VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			statementSnapshotID(s, sourceHash), uint64(s.security_id), nullableString(startDate), endDate, availableAt,
+			float64(s.revenue_usd), float64(s.net_income_usd), float64(s.diluted_eps_usd), float64(s.diluted_shares),
+			float64(s.operating_cash_flow_usd), float64(s.capex_usd), float64(s.free_cash_flow_usd),
+			float64(s.cash_usd), float64(s.debt_usd), float64(s.net_debt_usd), uint32(s.quality_flags), sourceHash, utcNow())
 		if err != nil {
 			return err
 		}
@@ -196,7 +195,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, uuidV4(), runID, uint64(v.security_id), utcNow
 		"order_intent_count": int(out.order_intent_count), "forecast_outcome_count": int(out.valuation_count),
 		"assumption_set_id": assumptionID, "model_input_sha256": sha256Hex([]byte(configJSON)),
 		"autonomy_approved": false, "autonomy_reason": "trading_mode=observe blocks autonomous staging",
-		"diagnostics": diagnostics,
+		"statement_builder_diagnostics": statementDiagnostics, "diagnostics": diagnostics,
 	})
 	if err != nil {
 		return err
@@ -232,175 +231,33 @@ VALUES (?, ?, ?, ?, ?)`, id, utcNow(), jsonText, hash, operator); err != nil {
 	return id, scenarios, hash, nil
 }
 
-func buildLatestStatements(db *sql.DB) ([]statementSnapshot, error) {
-	rows, err := db.Query(`SELECT security_id FROM securities WHERE investable=1 ORDER BY security_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []statementSnapshot
-	for rows.Next() {
-		var securityID uint64
-		if err := rows.Scan(&securityID); err != nil {
-			return nil, err
-		}
-		ends, err := candidateEndDates(db, securityID)
-		if err != nil {
-			return nil, err
-		}
-		count := 0
-		for _, end := range ends {
-			s, ok, err := buildStatement(db, securityID, end)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				out = append(out, s)
-				count++
-				if count >= 2 {
-					break
-				}
-			}
-		}
-	}
-	return out, rows.Err()
+func statementSnapshotSourceHash(s C.fa_statement_snapshot_v1) string {
+	return sha256Hex([]byte(mustCanonicalJSON(map[string]any{
+		"security_id":               uint64(s.security_id),
+		"period_start_day":          int64(s.period_start_day),
+		"period_end_day":            int64(s.period_end_day),
+		"available_at_epoch_s":      int64(s.available_at_epoch_s),
+		"is_ttm":                    uint8(s.is_ttm),
+		"revenue_usd":               float64(s.revenue_usd),
+		"net_income_usd":            float64(s.net_income_usd),
+		"diluted_eps_usd":           float64(s.diluted_eps_usd),
+		"diluted_shares":            float64(s.diluted_shares),
+		"operating_cash_flow_usd":   float64(s.operating_cash_flow_usd),
+		"capex_usd":                 float64(s.capex_usd),
+		"free_cash_flow_usd":        float64(s.free_cash_flow_usd),
+		"cash_usd":                  float64(s.cash_usd),
+		"debt_usd":                  float64(s.debt_usd),
+		"net_debt_usd":              float64(s.net_debt_usd),
+		"quality_flags":             uint32(s.quality_flags),
+		"statement_builder_version": abiVersion,
+	})))
 }
 
-func candidateEndDates(db *sql.DB, securityID uint64) ([]string, error) {
-	rows, err := db.Query(`SELECT DISTINCT rp.raw_end_date
-FROM canonical_observations co JOIN reporting_periods rp ON rp.period_id=co.period_id
-WHERE co.security_id=? AND co.metric_id=? AND co.observation_status IN ('selected','derived')
-AND co.dimensional_scope='consolidated_total' AND co.period_semantics IN ('fiscal_quarter','fiscal_year')
-ORDER BY rp.raw_end_date DESC LIMIT 8`, securityID, metricRevenue)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var end string
-		if err := rows.Scan(&end); err != nil {
-			return nil, err
-		}
-		out = append(out, end)
-	}
-	return out, rows.Err()
-}
-
-func buildStatement(db *sql.DB, securityID uint64, anchor string) (statementSnapshot, bool, error) {
-	revenue, _ := latestFlowTTM(db, securityID, metricRevenue, anchor)
-	netIncome, _ := latestFlowTTM(db, securityID, metricNetIncome, anchor)
-	eps, _ := latestFlowTTM(db, securityID, metricEPSDiluted, anchor)
-	ocf, _ := latestFlowTTM(db, securityID, metricOperatingCashFlow, anchor)
-	capex, _ := latestFlowTTM(db, securityID, metricCapex, anchor)
-	shares, _ := latestPoint(db, securityID, metricDilutedShares, anchor, "'fiscal_quarter','fiscal_year','fiscal_ytd'")
-	cash, _ := latestPoint(db, securityID, metricCash, anchor, "'instant'")
-	debt, _ := latestPoint(db, securityID, metricDebt, anchor, "'instant'")
-	if !revenue.ok && !netIncome.ok && !ocf.ok {
-		return statementSnapshot{}, false, nil
-	}
-	quality := uint32(0)
-	if !revenue.ok || revenue.value <= 0 {
-		quality |= stmtMissingRevenue | stmtLowConfidence
-	}
-	if !shares.ok || shares.value <= 0 {
-		quality |= stmtMissingShares | stmtLowConfidence
-	}
-	if !cash.ok {
-		quality |= stmtMissingCash
-	}
-	if !debt.ok {
-		quality |= stmtMissingDebt
-	}
-	fcf := ocf.value - capex.value
-	if fcf < 0 {
-		quality |= stmtNegativeFCF
-	}
-	sourceHash := sha256Hex([]byte(mustCanonicalJSON([]string{revenue.source, netIncome.source, eps.source, shares.source, ocf.source, capex.source, cash.source, debt.source})))
-	start := revenue.start
-	if start == "" {
-		start = anchor
-	}
-	s := statementSnapshot{
-		securityID: securityID, periodStartDate: sql.NullString{String: start, Valid: start != ""},
-		periodEndDate: anchor, availableAt: maxString(revenue.available, netIncome.available, eps.available, shares.available, ocf.available, capex.available, cash.available, debt.available),
-		revenue: revenue.value, netIncome: netIncome.value, eps: eps.value, shares: shares.value,
-		ocf: ocf.value, capex: capex.value, fcf: fcf, cash: cash.value, debt: debt.value, netDebt: debt.value - cash.value,
-		qualityFlags: quality, sourceHash: sourceHash,
-	}
-	s.id = stableID("stmt", map[string]any{"security_id": securityID, "period_end_date": s.periodEndDate, "available_at": s.availableAt, "source_hash": s.sourceHash})
-	return s, true, nil
-}
-
-type metricPoint struct {
-	ok        bool
-	value     float64
-	start     string
-	end       string
-	available string
-	source    string
-}
-
-func latestFlowTTM(db *sql.DB, securityID uint64, metricID int, anchor string) (metricPoint, error) {
-	rows, err := db.Query(`SELECT co.observation_id, co.value_decimal, co.available_at, rp.raw_start_date, rp.raw_end_date, co.period_semantics, co.duration_days
-FROM canonical_observations co JOIN reporting_periods rp ON rp.period_id=co.period_id
-WHERE co.security_id=? AND co.metric_id=? AND co.observation_status IN ('selected','derived') AND co.dimensional_scope='consolidated_total'
-AND co.period_semantics IN ('fiscal_quarter','fiscal_year') AND rp.raw_end_date <= ?
-ORDER BY rp.raw_end_date DESC, co.available_at DESC`, securityID, metricID, anchor)
-	if err != nil {
-		return metricPoint{}, err
-	}
-	defer rows.Close()
-	var quarters []metricPoint
-	for rows.Next() {
-		var p metricPoint
-		var sem string
-		var dur int
-		if err := rows.Scan(&p.source, &p.value, &p.available, &p.start, &p.end, &sem, &dur); err != nil {
-			return metricPoint{}, err
-		}
-		p.ok = true
-		if sem == "fiscal_quarter" && dur >= 70 && dur <= 110 {
-			quarters = append(quarters, p)
-		}
-		if sem == "fiscal_year" && dur >= 330 {
-			return p, nil
-		}
-	}
-	if len(quarters) >= 4 {
-		sum := 0.0
-		start := quarters[0].start
-		available := ""
-		var sources []string
-		for _, q := range quarters[:4] {
-			sum += q.value
-			if q.start < start {
-				start = q.start
-			}
-			if q.available > available {
-				available = q.available
-			}
-			sources = append(sources, q.source)
-		}
-		return metricPoint{ok: true, value: sum, start: start, end: quarters[0].end, available: available, source: strings.Join(sources, ",")}, nil
-	}
-	return metricPoint{}, nil
-}
-
-func latestPoint(db *sql.DB, securityID uint64, metricID int, anchor, semantics string) (metricPoint, error) {
-	row := db.QueryRow(fmt.Sprintf(`SELECT co.observation_id, co.value_decimal, co.available_at, COALESCE(rp.raw_start_date, rp.raw_instant_date), COALESCE(rp.raw_end_date, rp.raw_instant_date)
-FROM canonical_observations co JOIN reporting_periods rp ON rp.period_id=co.period_id
-WHERE co.security_id=? AND co.metric_id=? AND co.observation_status IN ('selected','derived') AND co.dimensional_scope='consolidated_total'
-AND co.period_semantics IN (%s) AND COALESCE(rp.raw_end_date, rp.raw_instant_date) <= ?
-ORDER BY COALESCE(rp.raw_end_date, rp.raw_instant_date) DESC, co.available_at DESC LIMIT 1`, semantics), securityID, metricID, anchor)
-	var p metricPoint
-	err := row.Scan(&p.source, &p.value, &p.available, &p.start, &p.end)
-	if errors.Is(err, sql.ErrNoRows) {
-		return metricPoint{}, nil
-	}
-	if err != nil {
-		return metricPoint{}, err
-	}
-	p.ok = true
-	return p, nil
+func statementSnapshotID(s C.fa_statement_snapshot_v1, sourceHash string) string {
+	return stableID("stmt", map[string]any{
+		"security_id":     uint64(s.security_id),
+		"period_end_date": dateFromEpochDay(int64(s.period_end_day)),
+		"available_at":    utcFromEpochSecond(int64(s.available_at_epoch_s)),
+		"source_hash":     sourceHash,
+	})
 }

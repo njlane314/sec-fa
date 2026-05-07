@@ -26,14 +26,16 @@ import (
 )
 
 type coreLib struct {
-	handle      unsafe.Pointer
-	statusName  unsafe.Pointer
-	planV1      unsafe.Pointer
-	planFreeV1  unsafe.Pointer
-	valueV1     unsafe.Pointer
-	valueFreeV1 unsafe.Pointer
-	gateV1      unsafe.Pointer
-	gateFreeV1  unsafe.Pointer
+	handle               unsafe.Pointer
+	statusName           unsafe.Pointer
+	buildPortfolioPlanV1 unsafe.Pointer
+	planFreeV1           unsafe.Pointer
+	buildStmtsV1         unsafe.Pointer
+	buildStmtsFreeV1     unsafe.Pointer
+	buildValuationPlanV1 unsafe.Pointer
+	valueFreeV1          unsafe.Pointer
+	checkRiskLimitsV1    unsafe.Pointer
+	gateFreeV1           unsafe.Pointer
 }
 
 func loadCore(path string) (*coreLib, error) {
@@ -63,19 +65,25 @@ func loadCore(path string) (*coreLib, error) {
 	if lib.statusName, err = load("fa_status_name"); err != nil {
 		return nil, err
 	}
-	if lib.planV1, err = load("fa_plan_v1"); err != nil {
+	if lib.buildPortfolioPlanV1, err = load("fa_build_portfolio_plan_v1"); err != nil {
 		return nil, err
 	}
 	if lib.planFreeV1, err = load("fa_plan_output_free_v1"); err != nil {
 		return nil, err
 	}
-	if lib.valueV1, err = load("fa_value_v1"); err != nil {
+	if lib.buildStmtsV1, err = load("fa_build_statement_snapshots_v1"); err != nil {
+		return nil, err
+	}
+	if lib.buildStmtsFreeV1, err = load("fa_statement_build_output_free_v1"); err != nil {
+		return nil, err
+	}
+	if lib.buildValuationPlanV1, err = load("fa_build_valuation_plan_v1"); err != nil {
 		return nil, err
 	}
 	if lib.valueFreeV1, err = load("fa_value_output_free_v1"); err != nil {
 		return nil, err
 	}
-	if lib.gateV1, err = load("fa_gate_v1"); err != nil {
+	if lib.checkRiskLimitsV1, err = load("fa_check_risk_limits_v1"); err != nil {
 		return nil, err
 	}
 	if lib.gateFreeV1, err = load("fa_gate_output_free_v1"); err != nil {

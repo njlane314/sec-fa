@@ -25,6 +25,7 @@ all timestamps distinguish accepted_at, ingested_at, and available_at
 
 ```text
 fresh broker reconciliation required for approval
+fresh broker reconciliation rechecked immediately before submission
 aggregate buy notional cannot exceed cash
 per-name, per-order, ADV, and mode limits enforced
 risk decisions reference prior order intents

@@ -30,7 +30,7 @@ ledger mutation code for order/risk state
 12. Static analysis must pass before release.
 13. Public structs are versioned by `abi_version`.
 14. No STL type is exposed across the C ABI.
-15. No plan or value function is allowed to submit, stage, or mutate broker state.
+15. No portfolio-plan or valuation-plan function is allowed to submit, stage, or mutate broker state.
 
 ## 3. Go rules for service shell
 
@@ -49,6 +49,10 @@ network calls require explicit User-Agent where required
 ```
 
 Go code may use dynamic allocation, libraries, SQLite, XML parsing, and network I/O. It must remain outside the pure C++ core.
+
+The accession XBRL parser and canonical observation resolver in `cli/xbrl.go` are explicit Class B data logic, not mere orchestration. They may remain in Go because XBRL parsing and source-fact normalization are messy data-ingestion work, but their resolver rules must stay named, tested, and auditable. They must not stage, submit, or approve orders. If canonicalization becomes part of execution authority, it must move behind a separate reviewed engine boundary instead of being hidden inside CLI command flow.
+
+The Go `value` command is orchestration only for valuation inputs: it loads canonical observations, calls `fa_build_statement_snapshots_v1`, then persists the returned statement snapshots. It must not rebuild TTM flows, choose statement anchors, or assign statement-quality flags in Go.
 
 ## 4. Exit-code convention
 

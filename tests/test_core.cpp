@@ -106,7 +106,7 @@ void expect_gate_decision(const fa_order_intent_v1& order_intent,
                           const char* expected_reason) {
     fa_gate_output_v1 output{};
     const fa_status_code status =
-        fa_gate_v1(&order_intent, 1u, securities, security_count, &limits, &output);
+        fa_check_risk_limits_v1(&order_intent, 1u, securities, security_count, &limits, &output);
     require(status == FA_OK);
     require(output.decision_count == 1u);
     require(output.decisions[0].decision == expected_decision);
@@ -134,7 +134,7 @@ void test_plan_and_gate_happy_path() {
     fa_risk_limits_v1 limits = fresh_limits();
 
     fa_plan_output_v1 output{};
-    const fa_status_code status = fa_plan_v1(facts, 8, securities, 2, positions, 1, &config, &limits, &output);
+    const fa_status_code status = fa_build_portfolio_plan_v1(facts, 8, securities, 2, positions, 1, &config, &limits, &output);
     require(status == FA_OK);
     require(output.forecast_count == 2);
     require(output.target_weight_count == 2);
@@ -144,7 +144,7 @@ void test_plan_and_gate_happy_path() {
     require(absd(output.order_intents[0].notional_usd - 10000.0) < 1.0);
 
     fa_gate_output_v1 risk{};
-    const fa_status_code risk_status = fa_gate_v1(output.order_intents, output.order_intent_count,
+    const fa_status_code risk_status = fa_check_risk_limits_v1(output.order_intents, output.order_intent_count,
                                                         securities, 2, &limits, &risk);
     require(risk_status == FA_OK);
     require(risk.decision_count == 1);
@@ -152,7 +152,7 @@ void test_plan_and_gate_happy_path() {
 
     limits.reconciliation_checked_at_epoch_s = 1700000000;
     fa_gate_output_v1 stale{};
-    const fa_status_code stale_status = fa_gate_v1(output.order_intents, output.order_intent_count,
+    const fa_status_code stale_status = fa_check_risk_limits_v1(output.order_intents, output.order_intent_count,
                                                          securities, 2, &limits, &stale);
     require(stale_status == FA_OK);
     require(stale.decision_count == 1);
@@ -217,7 +217,7 @@ void test_gate_rejects_aggregate_buys_above_cash() {
     limits.cash_usd = 1000.0;
 
     fa_gate_output_v1 rejected{};
-    fa_status_code status = fa_gate_v1(orders, 2u, securities, 2u, &limits, &rejected);
+    fa_status_code status = fa_check_risk_limits_v1(orders, 2u, securities, 2u, &limits, &rejected);
     require(status == FA_OK);
     require(rejected.decision_count == 2u);
     require(rejected.decisions[0].decision == FA_DECISION_REJECTED);
@@ -228,7 +228,7 @@ void test_gate_rejects_aggregate_buys_above_cash() {
 
     limits.cash_usd = 1200.0;
     fa_gate_output_v1 approved{};
-    status = fa_gate_v1(orders, 2u, securities, 2u, &limits, &approved);
+    status = fa_check_risk_limits_v1(orders, 2u, securities, 2u, &limits, &approved);
     require(status == FA_OK);
     require(approved.decision_count == 2u);
     require(approved.decisions[0].decision == FA_DECISION_APPROVED);
@@ -258,7 +258,7 @@ void test_plan_ignores_non_comparable_observations() {
 
     fa_plan_output_v1 output{};
     const fa_status_code status =
-        fa_plan_v1(facts, 4u, securities, 1u, nullptr, 0u, &config, &limits, &output);
+        fa_build_portfolio_plan_v1(facts, 4u, securities, 1u, nullptr, 0u, &config, &limits, &output);
     require(status == FA_OK);
     require(output.forecast_count == 1u);
     require(output.target_weight_count == 1u);
@@ -282,7 +282,7 @@ void test_plan_rejects_relevant_fact_abi_mismatch() {
 
     fa_plan_output_v1 output{};
     const fa_status_code status =
-        fa_plan_v1(facts, 1u, securities, 1u, nullptr, 0u, &config, &limits, &output);
+        fa_build_portfolio_plan_v1(facts, 1u, securities, 1u, nullptr, 0u, &config, &limits, &output);
     require(status == FA_ERR_BAD_ABI_VERSION);
     require(output.forecasts == nullptr);
     require(output.target_weights == nullptr);

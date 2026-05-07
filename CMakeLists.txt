@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(folio SHARED
     engine/core.cpp
     engine/growth.cpp
+    engine/statements.cpp
     engine/value.cpp
     engine/gate.cpp
 )

@@ -107,6 +107,20 @@ func parseDate(value string) (time.Time, error) {
 	return time.ParseInLocation("2006-01-02", value, time.UTC)
 }
 
+func dateFromEpochDay(day int64) string {
+	if day <= 0 {
+		return ""
+	}
+	return time.Unix(day*86400, 0).UTC().Format("2006-01-02")
+}
+
+func utcFromEpochSecond(epochSecond int64) string {
+	if epochSecond <= 0 {
+		return ""
+	}
+	return time.Unix(epochSecond, 0).UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
 func durationDays(start, end string) int {
 	s, err1 := parseDate(start)
 	e, err2 := parseDate(end)

@@ -87,6 +87,8 @@ Live broker submission is intentionally not implemented. The current command sup
 ./sec send --db /var/lib/sec/sec.db --adapter mock
 ```
 
+`send` rechecks broker reconciliation freshness immediately before adapter submission. A previously staged order is not sufficient authority if reconciliation has gone stale.
+
 ## 9. Reports
 
 ```sh

@@ -4,7 +4,7 @@
 
 The public C ABI is `abi/core.h`. All public structs include `abi_version` and all functions return explicit status codes.
 
-The C++ `fa_plan_v1` entrypoint consumes:
+The C++ `fa_build_portfolio_plan_v1` entrypoint consumes:
 
 ```text
 canonical facts
@@ -23,7 +23,25 @@ order intents
 diagnostics
 ```
 
-The C++ `fa_value_v1` entrypoint consumes:
+The C++ `fa_build_statement_snapshots_v1` entrypoint consumes:
+
+```text
+canonical observations
+securities
+model configuration
+risk-limit time context
+```
+
+and produces:
+
+```text
+periodized statement snapshots
+diagnostics
+```
+
+The Go `value` command loads canonical observations and persists returned snapshots. It must not construct TTM flows, choose valuation statement anchors, or assign statement-quality flags itself.
+
+The C++ `fa_build_valuation_plan_v1` entrypoint consumes:
 
 ```text
 statement snapshots
@@ -43,7 +61,7 @@ order intents
 diagnostics
 ```
 
-The C++ `fa_gate_v1` entrypoint consumes:
+The C++ `fa_check_risk_limits_v1` entrypoint consumes:
 
 ```text
 order intents

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define FA_ABI_VERSION 3u
+#define FA_ABI_VERSION 4u
 #define FA_SYMBOL_BYTES 16u
 #define FA_REASON_BYTES 128u
 #define FA_DIAGNOSTIC_BYTES 1024u
@@ -234,6 +234,13 @@ typedef struct fa_statement_snapshot_v1 {
     uint32_t quality_flags;
 } fa_statement_snapshot_v1;
 
+typedef struct fa_statement_build_output_v1 {
+    uint32_t abi_version;
+    size_t statement_count;
+    fa_statement_snapshot_v1* statements;
+    char diagnostics[FA_DIAGNOSTIC_BYTES];
+} fa_statement_build_output_v1;
+
 typedef struct fa_valuation_scenario_v1 {
     uint32_t abi_version;
     double revenue_cagr_5y;
@@ -299,6 +306,17 @@ typedef struct fa_gate_output_v1 {
 
 const char* fa_status_name(fa_status_code code);
 
+fa_status_code fa_build_portfolio_plan_v1(
+    const fa_canonical_fact_v1* facts,
+    size_t fact_count,
+    const fa_security_v1* securities,
+    size_t security_count,
+    const fa_position_v1* positions,
+    size_t position_count,
+    const fa_model_config_v1* config,
+    const fa_risk_limits_v1* risk_limits,
+    fa_plan_output_v1* output);
+
 fa_status_code fa_plan_v1(
     const fa_canonical_fact_v1* facts,
     size_t fact_count,
@@ -311,6 +329,30 @@ fa_status_code fa_plan_v1(
     fa_plan_output_v1* output);
 
 void fa_plan_output_free_v1(fa_plan_output_v1* output);
+
+fa_status_code fa_build_statement_snapshots_v1(
+    const fa_canonical_fact_v1* facts,
+    size_t fact_count,
+    const fa_security_v1* securities,
+    size_t security_count,
+    const fa_model_config_v1* config,
+    const fa_risk_limits_v1* risk_limits,
+    fa_statement_build_output_v1* output);
+
+void fa_statement_build_output_free_v1(fa_statement_build_output_v1* output);
+
+fa_status_code fa_build_valuation_plan_v1(
+    const fa_statement_snapshot_v1* statements,
+    size_t statement_count,
+    const fa_security_v1* securities,
+    size_t security_count,
+    const fa_position_v1* positions,
+    size_t position_count,
+    const fa_valuation_scenario_v1* scenarios,
+    size_t scenario_count,
+    const fa_model_config_v1* config,
+    const fa_risk_limits_v1* risk_limits,
+    fa_value_output_v1* output);
 
 fa_status_code fa_value_v1(
     const fa_statement_snapshot_v1* statements,
@@ -326,6 +368,14 @@ fa_status_code fa_value_v1(
     fa_value_output_v1* output);
 
 void fa_value_output_free_v1(fa_value_output_v1* output);
+
+fa_status_code fa_check_risk_limits_v1(
+    const fa_order_intent_v1* order_intents,
+    size_t order_intent_count,
+    const fa_security_v1* securities,
+    size_t security_count,
+    const fa_risk_limits_v1* risk_limits,
+    fa_gate_output_v1* output);
 
 fa_status_code fa_gate_v1(
     const fa_order_intent_v1* order_intents,

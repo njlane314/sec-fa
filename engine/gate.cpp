@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-extern "C" fa_status_code fa_gate_v1(
+extern "C" fa_status_code fa_check_risk_limits_v1(
     const fa_order_intent_v1* order_intents,
     size_t order_intent_count,
     const fa_security_v1* securities,
@@ -136,4 +136,15 @@ extern "C" fa_status_code fa_gate_v1(
                         "gate_ok intents=%zu reconciliation_fresh=%d aggregate_buy_notional=%.2f",
                         order_intent_count, reconciliation_fresh ? 1 : 0, aggregate_buy_notional);
     return FA_OK;
+}
+
+extern "C" fa_status_code fa_gate_v1(
+    const fa_order_intent_v1* order_intents,
+    size_t order_intent_count,
+    const fa_security_v1* securities,
+    size_t security_count,
+    const fa_risk_limits_v1* risk_limits,
+    fa_gate_output_v1* output) {
+    return fa_check_risk_limits_v1(order_intents, order_intent_count, securities,
+                                   security_count, risk_limits, output);
 }

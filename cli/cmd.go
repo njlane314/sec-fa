@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -87,6 +88,7 @@ func cmdBrokerSubmit(args []string) error {
 	dbPath := fs.String("db", "", "")
 	adapter := fs.String("adapter", "mock", "")
 	limit := fs.Int("limit", 100, "")
+	maxReconciliationAgeSec := fs.Int64("max-reconciliation-age-s", 3600, "")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -105,8 +107,11 @@ func cmdBrokerSubmit(args []string) error {
 	if mode != "paper" && mode != "live_limited" && mode != "live" {
 		return fail(3, "cannot send broker orders in mode=%q", mode)
 	}
+	if err := requireFreshBrokerReconciliation(db, *maxReconciliationAgeSec); err != nil {
+		return err
+	}
 	rows, err := db.Query(`SELECT so.staged_order_id, so.security_id, so.side, so.notional_usd
-FROM staged_orders so LEFT JOIN broker_events be ON be.staged_order_id=so.staged_order_id AND be.event_type='mock_order_submitted'
+	FROM staged_orders so LEFT JOIN broker_events be ON be.staged_order_id=so.staged_order_id AND be.event_type='mock_order_submitted'
 WHERE be.broker_event_id IS NULL ORDER BY so.staged_at LIMIT ?`, *limit)
 	if err != nil {
 		return err
@@ -145,6 +150,27 @@ VALUES (?, ?, 'mock_order_submitted', ?, ?)`, eventID, stagedID, mustCanonicalJS
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "mock broker submissions=%d\n", sent)
+	return nil
+}
+
+func requireFreshBrokerReconciliation(db *sql.DB, maxAgeSec int64) error {
+	if maxAgeSec <= 0 {
+		return fail(4, "broker reconciliation freshness limit must be positive")
+	}
+	var reconciled int
+	var checkedAt string
+	err := db.QueryRow(`SELECT reconciled, checked_at FROM broker_state WHERE id=1`).Scan(&reconciled, &checkedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fail(4, "broker reconciliation is missing or stale")
+	}
+	if err != nil {
+		return err
+	}
+	checkedEpoch := epochSecond(checkedAt)
+	nowEpoch := time.Now().UTC().Unix()
+	if reconciled == 0 || checkedEpoch <= 0 || (nowEpoch-checkedEpoch) > maxAgeSec {
+		return fail(4, "broker reconciliation is missing or stale")
+	}
 	return nil
 }
 

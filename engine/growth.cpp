@@ -219,7 +219,7 @@ bool validate_plan_v1_inputs(const fa_canonical_fact_v1* facts,
 
 }  // namespace
 
-extern "C" fa_status_code fa_plan_v1(
+extern "C" fa_status_code fa_build_portfolio_plan_v1(
     const fa_canonical_fact_v1* facts,
     size_t fact_count,
     const fa_security_v1* securities,
@@ -383,4 +383,19 @@ extern "C" fa_status_code fa_plan_v1(
                         "plan_ok securities=%zu investable=%zu facts=%zu intents=%zu",
                         security_count, investable_count, fact_count, intent_count);
     return FA_OK;
+}
+
+extern "C" fa_status_code fa_plan_v1(
+    const fa_canonical_fact_v1* facts,
+    size_t fact_count,
+    const fa_security_v1* securities,
+    size_t security_count,
+    const fa_position_v1* positions,
+    size_t position_count,
+    const fa_model_config_v1* config,
+    const fa_risk_limits_v1* risk_limits,
+    fa_plan_output_v1* output) {
+    return fa_build_portfolio_plan_v1(facts, fact_count, securities, security_count,
+                                      positions, position_count, config, risk_limits,
+                                      output);
 }

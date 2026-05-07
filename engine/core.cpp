@@ -196,6 +196,16 @@ extern "C" void fa_value_output_free_v1(fa_value_output_v1* output) {
     output->diagnostics[0] = '\0';
 }
 
+extern "C" void fa_statement_build_output_free_v1(fa_statement_build_output_v1* output) {
+    if (output == nullptr) {
+        return;
+    }
+    std::free(output->statements);
+    output->statements = nullptr;
+    output->statement_count = 0u;
+    output->diagnostics[0] = '\0';
+}
+
 extern "C" void fa_gate_output_free_v1(fa_gate_output_v1* output) {
     if (output == nullptr) {
         return;

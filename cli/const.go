@@ -1,7 +1,7 @@
 package main
 
 const (
-	abiVersion      = 3
+	abiVersion      = 4
 	reasonBytes     = 128
 	diagnosticBytes = 1024
 

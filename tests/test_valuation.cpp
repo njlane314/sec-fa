@@ -81,6 +81,62 @@ fa_position_v1 position(uint64_t security_id, double weight_ratio) {
     return pos;
 }
 
+uint32_t metric_kind_for(int32_t metric_id) {
+    switch (metric_id) {
+        case FA_METRIC_EPS_DILUTED: return FA_METRIC_KIND_PER_SHARE_FLOW;
+        case FA_METRIC_CASH:
+        case FA_METRIC_DEBT: return FA_METRIC_KIND_INSTANT;
+        default: return FA_METRIC_KIND_FLOW;
+    }
+}
+
+uint32_t basis_for_metric(int32_t metric_id) {
+    switch (metric_id) {
+        case FA_METRIC_REVENUE: return FA_BASIS_REVENUE_CUSTOMER_CONTRACT_EXCLUDING_TAX;
+        case FA_METRIC_NET_INCOME: return FA_BASIS_NET_INCOME_STANDARD;
+        case FA_METRIC_EPS_DILUTED: return FA_BASIS_EPS_DILUTED_STANDARD;
+        case FA_METRIC_DILUTED_SHARES: return FA_BASIS_DILUTED_SHARES_STANDARD;
+        case FA_METRIC_OPERATING_CASH_FLOW: return FA_BASIS_OPERATING_CASH_FLOW_STANDARD;
+        case FA_METRIC_CAPEX: return FA_BASIS_CAPEX_STANDARD;
+        case FA_METRIC_CASH: return FA_BASIS_CASH_STANDARD;
+        case FA_METRIC_DEBT: return FA_BASIS_DEBT_STANDARD;
+        default: return FA_BASIS_UNKNOWN;
+    }
+}
+
+fa_canonical_fact_v1 canonical_fact(uint64_t security_id,
+                                    int32_t metric_id,
+                                    double value,
+                                    int64_t end_day) {
+    fa_canonical_fact_v1 fact{};
+    fact.abi_version = FA_ABI_VERSION;
+    fact.security_id = security_id;
+    fact.metric_id = metric_id;
+    fact.value = value;
+    fact.period_start_day = end_day - 90;
+    fact.period_end_day = end_day;
+    fact.available_at_epoch_s = 1700000000 + end_day;
+    fact.quality_flags = FA_QUALITY_NONE;
+    fact.metric_kind = metric_kind_for(metric_id);
+    fact.period_semantics = FA_PERIOD_FISCAL_QUARTER;
+    fact.basis_id = basis_for_metric(metric_id);
+    fact.observation_status = FA_OBSERVATION_SELECTED;
+    fact.duration_days = 91u;
+    fact.dimensions_hash = 0x44136fa355b3678au;
+    return fact;
+}
+
+fa_canonical_fact_v1 instant_fact(uint64_t security_id,
+                                  int32_t metric_id,
+                                  double value,
+                                  int64_t day) {
+    fa_canonical_fact_v1 fact = canonical_fact(security_id, metric_id, value, day);
+    fact.period_start_day = day;
+    fact.period_semantics = FA_PERIOD_INSTANT;
+    fact.duration_days = 0u;
+    return fact;
+}
+
 void standard_scenarios(fa_valuation_scenario_v1* scenarios) {
     scenarios[0] = scenario(0.00, 0.00, 0.08, 0.12, 10.0, 0.25);
     scenarios[1] = scenario(0.04, 0.02, 0.12, 0.10, 16.0, 0.50);
@@ -135,7 +191,7 @@ void test_value_happy_path() {
     fa_risk_limits_v1 limits = fresh_limits();
 
     fa_value_output_v1 output{};
-    const fa_status_code status = fa_value_v1(
+    const fa_status_code status = fa_build_valuation_plan_v1(
         statements, 2, securities, 1, positions, 1, scenarios, 3, &config, &limits, &output);
 
     require(status == FA_OK);
@@ -154,6 +210,56 @@ void test_value_happy_path() {
     fa_value_output_free_v1(&output);
 }
 
+void test_statement_builder_from_canonical_observations() {
+    fa_security_v1 securities[1] = {
+        security(1, "AAA", 10.0, 50000000.0),
+    };
+
+    fa_canonical_fact_v1 facts[24]{};
+    int n = 0;
+    const int64_t ends[5] = {19000, 19091, 19182, 19273, 19364};
+    for (int i = 0; i < 5; ++i) {
+        const double revenue = 100000000.0 + (10000000.0 * static_cast<double>(i));
+        facts[n++] = canonical_fact(1, FA_METRIC_REVENUE, revenue, ends[i]);
+        facts[n++] = canonical_fact(1, FA_METRIC_DILUTED_SHARES, 100000000.0, ends[i]);
+        facts[n++] = canonical_fact(1, FA_METRIC_OPERATING_CASH_FLOW, revenue * 0.20, ends[i]);
+        facts[n++] = canonical_fact(1, FA_METRIC_CAPEX, revenue * 0.04, ends[i]);
+    }
+    facts[n++] = instant_fact(1, FA_METRIC_CASH, 300000000.0, ends[3]);
+    facts[n++] = instant_fact(1, FA_METRIC_DEBT, 100000000.0, ends[3]);
+    facts[n++] = instant_fact(1, FA_METRIC_CASH, 320000000.0, ends[4]);
+    facts[n++] = instant_fact(1, FA_METRIC_DEBT, 100000000.0, ends[4]);
+    require(n == 24);
+
+    fa_model_config_v1 config = model_config();
+    fa_risk_limits_v1 limits = fresh_limits();
+
+    fa_statement_build_output_v1 statements{};
+    fa_status_code status = fa_build_statement_snapshots_v1(
+        facts, 24u, securities, 1u, &config, &limits, &statements);
+    require(status == FA_OK);
+    require(statements.statement_count == 2u);
+    require(statements.statements[0].security_id == 1u);
+    require(statements.statements[0].is_ttm == 1u);
+    require(absd(statements.statements[0].revenue_usd - 500000000.0) < 1.0);
+    require(absd(statements.statements[1].revenue_usd - 460000000.0) < 1.0);
+    require(statements.statements[0].diluted_shares > 0.0);
+    require((statements.statements[0].quality_flags & FA_STMT_LOW_CONFIDENCE) == 0u);
+
+    fa_valuation_scenario_v1 scenarios[3]{};
+    standard_scenarios(scenarios);
+    fa_value_output_v1 valued{};
+    status = fa_build_valuation_plan_v1(statements.statements, statements.statement_count,
+                                        securities, 1u, nullptr, 0u, scenarios, 3u,
+                                        &config, &limits, &valued);
+    require(status == FA_OK);
+    require(valued.valuation_count == 1u);
+    require(valued.order_intent_count == 1u);
+
+    fa_value_output_free_v1(&valued);
+    fa_statement_build_output_free_v1(&statements);
+}
+
 void test_value_rejects_missing_or_invalid_scenarios() {
     fa_security_v1 securities[1] = {
         security(1, "AAA", 10.0, 50000000.0),
@@ -166,7 +272,7 @@ void test_value_rejects_missing_or_invalid_scenarios() {
 
     fa_value_output_v1 missing{};
     fa_status_code status =
-        fa_value_v1(statements, 1u, securities, 1u, nullptr, 0u, nullptr, 0u,
+        fa_build_valuation_plan_v1(statements, 1u, securities, 1u, nullptr, 0u, nullptr, 0u,
                     &config, &limits, &missing);
     require(status == FA_ERR_INVALID_INPUT);
     require(contains(missing.diagnostics, "at least one valuation scenario is required"));
@@ -176,7 +282,7 @@ void test_value_rejects_missing_or_invalid_scenarios() {
         scenario(0.04, 0.02, 0.12, 0.01, 16.0, 1.00),
     };
     fa_value_output_v1 bad{};
-    status = fa_value_v1(statements, 1u, securities, 1u, nullptr, 0u, invalid, 1u,
+    status = fa_build_valuation_plan_v1(statements, 1u, securities, 1u, nullptr, 0u, invalid, 1u,
                          &config, &limits, &bad);
     require(status == FA_ERR_INVALID_INPUT);
     require(contains(bad.diagnostics, "invalid valuation scenario"));
@@ -199,7 +305,7 @@ void test_value_filters_stale_statements() {
 
     fa_value_output_v1 output{};
     const fa_status_code status =
-        fa_value_v1(statements, 2u, securities, 1u, nullptr, 0u, scenarios, 3u,
+        fa_build_valuation_plan_v1(statements, 2u, securities, 1u, nullptr, 0u, scenarios, 3u,
                     &config, &limits, &output);
     require(status == FA_OK);
     require(output.valuation_count == 1u);
@@ -228,7 +334,7 @@ void test_value_low_confidence_statement_does_not_create_intent() {
 
     fa_value_output_v1 output{};
     const fa_status_code status =
-        fa_value_v1(statements, 2u, securities, 1u, nullptr, 0u, scenarios, 3u,
+        fa_build_valuation_plan_v1(statements, 2u, securities, 1u, nullptr, 0u, scenarios, 3u,
                     &config, &limits, &output);
     require(status == FA_OK);
     require(output.valuation_count == 1u);
@@ -245,6 +351,7 @@ void test_value_low_confidence_statement_does_not_create_intent() {
 
 int main() {
     test_value_happy_path();
+    test_statement_builder_from_canonical_observations();
     test_value_rejects_missing_or_invalid_scenarios();
     test_value_filters_stale_statements();
     test_value_low_confidence_statement_does_not_create_intent();
