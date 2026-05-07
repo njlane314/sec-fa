@@ -64,6 +64,7 @@ Implemented:
 - Batch issuer ingest that discovers, fetches, and parses financial 10-K/10-Q filings only.
 - Databento-backed seed CSV generation for limited explicit stock symbol lists.
 - Auditable model assumptions, statement snapshots, valuations, forecast outcomes, and autonomy controls.
+- SQLite-backed durable daemon workers for SEC discovery, raw pulls, XBRL parsing, planning, risk gating, staging, guarded submission, reconciliation, and notification.
 - CI check script, CMake build, unit test, and schema files.
 - Philosophy, requirements, hazards, coding standard, naming standard, and operations documents.
 
@@ -302,6 +303,7 @@ engine/*.cpp     deterministic C++ model, valuation, and risk gate
 rust/sec-cli/    Rust CLI orchestration package
 rust/sec-filings/ Rust SEC filing parser crate
 cmd/secd/        Go HTTP/service process
+cmd/sec-daemon/  Go durable state worker runner, built as sec-watchd/sec-pulld/etc
 schema.sql       local operational schema, raw facts, periods, canonical observations
 docs/contracts/  line-oriented event/control and observation contracts
 docs/            intent, requirements, hazards, naming, operations

@@ -39,7 +39,7 @@ periodized statement snapshots
 diagnostics
 ```
 
-The Go `value` command loads canonical observations and persists returned snapshots. It must not construct TTM flows, choose valuation statement anchors, or assign statement-quality flags itself.
+The Rust `value` command loads canonical observations and persists returned snapshots. It must not construct TTM flows, choose valuation statement anchors, or assign statement-quality flags itself.
 
 The C++ `fa_build_valuation_plan_v1` entrypoint consumes:
 

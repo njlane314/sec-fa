@@ -10,6 +10,42 @@ CREATE TABLE IF NOT EXISTS events (
     payload_sha256 TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS daemon_heartbeats (
+    daemon_name TEXT PRIMARY KEY,
+    pid INTEGER NOT NULL,
+    host TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    state TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_items (
+    work_id TEXT PRIMARY KEY,
+    work_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    subject_hash TEXT,
+    status TEXT NOT NULL CHECK (status IN (
+        'queued', 'leased', 'succeeded', 'failed', 'dead'
+    )),
+    priority INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_owner TEXT,
+    lease_until TEXT,
+    available_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(work_type, subject_id, subject_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_items_claim
+    ON work_items(work_type, status, available_at, priority, lease_until);
+
+CREATE TABLE IF NOT EXISTS daemon_cursors (
+    daemon_name TEXT PRIMARY KEY,
+    cursor_value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS securities (
     security_id INTEGER PRIMARY KEY,
     cik TEXT NOT NULL UNIQUE,

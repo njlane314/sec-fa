@@ -62,7 +62,7 @@ FA-MODEL-004
   The model shall emit order intents, not broker orders.
 
 FA-MODEL-012
-  The C++ model core shall build valuation statement snapshots from canonical observations; Go shall not derive TTM flows or statement-quality flags for valuation.
+  The C++ model core shall build valuation statement snapshots from canonical observations; Rust shall not derive TTM flows or statement-quality flags for valuation.
 ```
 
 ## Ledger
@@ -82,7 +82,7 @@ FA-LEDGER-003
 
 ```text
 requirement_id | method                 | evidence
-FA-SAF-001     | C++ unit + CI smoke     | tests/test_core.cpp, cli/cmd.go, check
+FA-SAF-001     | C++ unit + CI smoke     | tests/test_core.cpp, rust/sec-cli/src/main.rs, check
 FA-SAF-002     | C++ unit + CI smoke     | tests/test_core.cpp, check
 FA-SAF-003     | C++ risk gate           | engine/gate.cpp
 FA-SAF-004     | C++ risk gate           | engine/gate.cpp

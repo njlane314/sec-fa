@@ -3,6 +3,7 @@
 DB ?= .fa.db
 CARGO ?= cargo
 GO ?= go
+DAEMONS := sec-watchd sec-pulld sec-xbrld sec-pland sec-gated sec-staged sec-submitd sec-recond sec-notifyd
 
 all: build
 
@@ -13,11 +14,19 @@ build:
 	mkdir -p build
 	cp target/release/sec build/sec
 	$(GO) build -o build/secd ./cmd/secd
+	$(MAKE) daemons
+
+daemons:
+	mkdir -p build
+	@for daemon in $(DAEMONS); do \
+		echo "building $$daemon"; $(GO) build -o "build/$$daemon" ./cmd/sec-daemon; \
+	done
 
 test: build
 	ctest --test-dir build --output-on-failure
 	$(CARGO) test --workspace
 	$(GO) test ./cmd/secd
+	$(GO) test ./cmd/sec-daemon
 
 check:
 	./check

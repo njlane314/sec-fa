@@ -6,4 +6,5 @@ export SEC_FA_ROOT=$ROOT
 if [ -x "$ROOT/build/sec" ]; then
     exec "$ROOT/build/sec" "$@"
 fi
-exec go run "$ROOT/cli" "$@"
+printf '%s\n' "error: build/sec is missing; run 'make build' first" >&2
+exit 127
