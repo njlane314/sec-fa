@@ -2,7 +2,8 @@
 set -eu
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$DIR
+export SEC_FA_ROOT=$ROOT
 if [ -x "$ROOT/build/sec" ]; then
     exec "$ROOT/build/sec" "$@"
 fi
-exec go run "$ROOT" "$@"
+exec go run "$ROOT/app" "$@"

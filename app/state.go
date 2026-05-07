@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	_ "embed"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,9 +9,6 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 )
-
-//go:embed schema.sql
-var schemaSQL string
 
 func openDB(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite3", path+"?_foreign_keys=on")
@@ -25,6 +21,24 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func loadSchemaSQL() (string, error) {
+	var candidates []string
+	if root := os.Getenv("SEC_FA_ROOT"); root != "" {
+		candidates = append(candidates, filepath.Join(root, "schema.sql"))
+	}
+	candidates = append(candidates, "schema.sql", filepath.Join("..", "schema.sql"))
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "schema.sql"))
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return string(data), nil
+		}
+	}
+	return "", fail(1, "schema.sql not found")
 }
 
 func ensureDB(db *sql.DB) error {
@@ -53,7 +67,11 @@ func cmdInitDB(args []string) error {
 		return err
 	}
 	defer db.Close()
-	if _, err := db.Exec(schemaSQL); err != nil {
+	schema, err := loadSchemaSQL()
+	if err != nil {
+		return err
+	}
+	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
 	if err := seedMetricConceptCandidates(db); err != nil {

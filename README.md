@@ -240,16 +240,7 @@ examples/mock
 ```text
 include/core.h             C ABI boundary
 core/*.cpp                 deterministic C++ model, valuation, and risk gate
-main.go                   Go command dispatcher
-state.go                  SQLite state, schema initialization, securities, positions
-ingest.go                 SEC submissions watcher and archive fetcher
-xbrl.go, xml.go           XBRL package parsing and XML helpers
-bridge.go                 dynamic C++ library loading and C string helpers
-model.go                  v1 model run and shared ABI conversions
-value.go                  v2 valuation run and statement builder
-risk.go                   C++ risk gate command
-cmd.go                    staging, mock submission, modes, status, reports
-util.go, const.go         shared helpers and canonical metric constants
+app/                       Go orchestration package
 schema.sql                local operational schema, raw facts, periods, canonical observations
 docs/schemas/              line-oriented event/control and observation contracts
 docs/                      intent, requirements, hazards, naming, operations
