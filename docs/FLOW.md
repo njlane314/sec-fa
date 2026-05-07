@@ -48,7 +48,7 @@ sym     upsert issuer/security metadata
 pos     upsert current internal position state
 watch   discover recent SEC filings
 pull    fetch immutable SEC filing artifacts
-comp    import SEC companyfacts fallback data
+comp    reserved for SEC companyfacts fallback data
 xbrl    parse an accession package and resolve observations
 univ    construct the investable/research universe
 recon   record external broker/cash truth
@@ -75,14 +75,14 @@ discover -> fetch -> parse -> build -> recon -> plan -> gate -> stage -> send ->
 ```sh
 DB=.sec.db
 
-bin/init --db "$DB" &&
-bin/sym --db "$DB" \
+./sec init --db "$DB" &&
+./sec sym --db "$DB" \
   --cik 0000320193 \
   --symbol AAPL \
   --price-usd 200 \
   --adv-usd 5000000000 \
   --investable 1 &&
-bin/pos --db "$DB" \
+./sec pos --db "$DB" \
   --cik 0000320193 \
   --quantity-shares 0 \
   --market-value-usd 0 \
@@ -98,13 +98,13 @@ DB=.sec.db
 RAW=raw
 UA="Your Name your.email@example.com"
 
-bin/watch --db "$DB" \
+./sec watch --db "$DB" \
   --cik 0000320193 \
   --user-agent "$UA" &&
-bin/pull --db "$DB" \
+./sec pull --db "$DB" \
   --raw-root "$RAW" \
   --user-agent "$UA" &&
-bin/xbrl --db "$DB" \
+./sec xbrl --db "$DB" \
   --accession 0000320193-24-000123 \
   --cik 0000320193 \
   --symbol AAPL \
@@ -122,11 +122,11 @@ RAW=raw
 UA="Your Name your.email@example.com"
 
 for cik in 0000320193 0000789019 0001652044; do
-  bin/watch --db "$DB" --cik "$cik" --user-agent "$UA"
+  ./sec watch --db "$DB" --cik "$cik" --user-agent "$UA"
 done
 
-bin/pull --db "$DB" --raw-root "$RAW" --user-agent "$UA" &&
-bin/univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
+./sec pull --db "$DB" --raw-root "$RAW" --user-agent "$UA" &&
+./sec univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
 ```
 
 This is fan-in composition. Many `watch` calls feed one pull pass and one universe snapshot.
@@ -138,21 +138,21 @@ DB=.sec.db
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
 
-bin/recon --db "$DB" \
+./sec recon --db "$DB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 \
   --reconciled 1 &&
-bin/plan --db "$DB" \
+./sec plan --db "$DB" \
   --core-lib "$LIB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 &&
-bin/value --db "$DB" \
+./sec value --db "$DB" \
   --core-lib "$LIB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 &&
-bin/gate --db "$DB" \
+./sec gate --db "$DB" \
   --core-lib "$LIB" &&
-bin/report daily --db "$DB"
+./sec report daily --db "$DB"
 ```
 
 This chain is safe for observe or research operation because it stops at risk decisions. It does not call `stage` or `send`.
@@ -164,18 +164,18 @@ DB=.sec.db
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
 
-bin/recon --db "$DB" \
+./sec recon --db "$DB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 \
   --reconciled 1 &&
-bin/plan --db "$DB" \
+./sec plan --db "$DB" \
   --core-lib "$LIB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 &&
-bin/gate --db "$DB" \
+./sec gate --db "$DB" \
   --core-lib "$LIB" &&
-bin/stage --db "$DB" &&
-bin/report daily --db "$DB"
+./sec stage --db "$DB" &&
+./sec report daily --db "$DB"
 ```
 
 This is the shadow/paper boundary. `stage` consumes only approved risk decisions. It still does not speak to the broker adapter.
@@ -185,13 +185,13 @@ This is the shadow/paper boundary. `stage` consumes only approved risk decisions
 ```sh
 DB=.sec.db
 
-bin/stage --db "$DB" &&
-bin/send --db "$DB" --adapter mock &&
-bin/recon --db "$DB" \
+./sec stage --db "$DB" &&
+./sec send --db "$DB" --adapter mock &&
+./sec recon --db "$DB" \
   --portfolio-value-usd 100000 \
   --cash-usd 100000 \
   --reconciled 1 &&
-bin/report daily --db "$DB"
+./sec report daily --db "$DB"
 ```
 
 `send` is the only public program that crosses the execution boundary. In the current implementation, `--adapter mock` is the guarded adapter.
@@ -201,9 +201,9 @@ bin/report daily --db "$DB"
 ```sh
 DB=.sec.db
 
-bin/report daily --db "$DB" &&
-bin/stat --db "$DB" &&
-bin/ping \
+./sec report daily --db "$DB" &&
+./sec stat --db "$DB" &&
+./sec ping \
   --method ntfy \
   --ntfy-topic your-secret-topic \
   --message "Daily run complete"
@@ -216,16 +216,16 @@ This is fan-out from the ledger. `report`, `stat`, and `ping` should not mutate 
 Use `&&` when the next command must not run after a failed precondition:
 
 ```sh
-bin/recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
-bin/plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
-bin/gate --db "$DB" --core-lib "$LIB" &&
-bin/stage --db "$DB"
+./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
+./sec plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
+./sec gate --db "$DB" --core-lib "$LIB" &&
+./sec stage --db "$DB"
 ```
 
 Use `;` only when the commands are independent diagnostics:
 
 ```sh
-bin/stat --db "$DB" ; bin/report daily --db "$DB"
+./sec stat --db "$DB" ; ./sec report daily --db "$DB"
 ```
 
 That distinction is the command-line safety contract: gates are chained with `&&`, observability can fan out.

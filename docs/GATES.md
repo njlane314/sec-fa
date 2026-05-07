@@ -58,7 +58,7 @@ halted blocks staging and submission
 ```text
 requirements matrix updated
 hazard table updated
-ci/check passes
+check passes
 sanitizer builds pass
 static analysis passes
 synthetic risk scenarios pass

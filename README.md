@@ -42,10 +42,11 @@ Implemented:
 - Deterministic baseline fundamental model over canonical facts.
 - Deterministic valuation model over periodized statement snapshots and explicit scenario assumptions.
 - Hard C++ risk gate for order intents.
+- Go orchestration CLI for SQLite, SEC/XBRL package parsing, model execution, risk checks, reports, and guarded mock submission.
 - SQLite operational database for local/single-node operation.
 - SEC submissions watcher and raw filing fetcher using SEC public endpoints.
 - SEC accession-level inline-XBRL/classic-XBRL package parser that stores source documents, contexts, units, dimensions, and raw facts before canonical resolution.
-- SEC `companyfacts` importer retained as a fallback/reconciliation path.
+- SEC `companyfacts` importer retained as a design path; the Go CLI currently uses accession XBRL as the primary ingestion path.
 - CLI commands for securities, positions, model runs, risk checks, order staging, broker reconciliation snapshots, reports, and notifications.
 - Auditable model assumptions, statement snapshots, valuations, forecast outcomes, and autonomy controls.
 - CI check script, CMake build, unit test, and schema files.
@@ -63,14 +64,14 @@ Not implemented by design in this first drop:
 ```sh
 cd sec-fa
 make check
-bin/init --db .sec.db
-bin/sym --db .sec.db --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
-bin/xbrl --db .sec.db --accession 0000320193-24-000123 --cik 0000320193 --symbol AAPL --raw-root raw --user-agent "Your Name your.email@example.com"
-bin/univ --db .sec.db --name us_core --min-adv-usd 0 --min-fact-count 2
-bin/recon --db .sec.db --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
-bin/plan --db .sec.db --core-lib build/libfolio.so --portfolio-value-usd 100000 --cash-usd 100000
-bin/gate --db .sec.db --core-lib build/libfolio.so
-bin/report daily --db .sec.db
+./sec init --db .sec.db
+./sec sym --db .sec.db --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
+./sec xbrl --db .sec.db --accession 0000320193-24-000123 --cik 0000320193 --symbol AAPL --raw-root raw --user-agent "Your Name your.email@example.com"
+./sec univ --db .sec.db --name us_core --min-adv-usd 0 --min-fact-count 2
+./sec recon --db .sec.db --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
+./sec plan --db .sec.db --core-lib build/libfolio.so --portfolio-value-usd 100000 --cash-usd 100000
+./sec gate --db .sec.db --core-lib build/libfolio.so
+./sec report daily --db .sec.db
 ```
 
 On macOS the shared library is usually `build/libfolio.dylib`. On Linux it is `build/libfolio.so`.
@@ -84,10 +85,9 @@ The model-input ABI now carries these semantics. The C++ core rejects ambiguous 
 
 ## Tool names
 
-The canonical entrypoint is `bin/sec`. Public programs use single lowercase words with no project prefix:
+The canonical entrypoint is `./sec`. Public commands use single lowercase words with no project prefix:
 
 ```text
-sec
 init
 sym
 pos
@@ -133,7 +133,7 @@ recon ────────────────────────�
                                   └──► ping
 ```
 
-`comp` remains a fallback/reconciliation importer for SEC companyfacts data. `value` runs the newer valuation path.
+`comp` is reserved for a future companyfacts fallback/reconciliation importer. `value` runs the newer valuation path.
 
 ## Composition examples
 
@@ -142,14 +142,14 @@ Initialize and seed state:
 ```sh
 DB=.sec.db
 
-bin/init --db "$DB" &&
-bin/sym --db "$DB" \
+./sec init --db "$DB" &&
+./sec sym --db "$DB" \
   --cik 0000320193 \
   --symbol AAPL \
   --price-usd 200 \
   --adv-usd 5000000000 \
   --investable 1 &&
-bin/pos --db "$DB" \
+./sec pos --db "$DB" \
   --cik 0000320193 \
   --quantity-shares 0 \
   --market-value-usd 0 \
@@ -163,16 +163,16 @@ DB=.sec.db
 RAW=raw
 UA="Your Name your.email@example.com"
 
-bin/watch --db "$DB" --cik 0000320193 --user-agent "$UA" &&
-bin/pull --db "$DB" --raw-root "$RAW" --user-agent "$UA" &&
-bin/xbrl \
+./sec watch --db "$DB" --cik 0000320193 --user-agent "$UA" &&
+./sec pull --db "$DB" --raw-root "$RAW" --user-agent "$UA" &&
+./sec xbrl \
   --db "$DB" \
   --accession 0000320193-24-000123 \
   --cik 0000320193 \
   --symbol AAPL \
   --raw-root "$RAW" \
   --user-agent "$UA" &&
-bin/univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
+./sec univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
 ```
 
 Research-only run. This stops at risk decisions; it does not stage or submit orders:
@@ -182,30 +182,30 @@ DB=.sec.db
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
 
-bin/recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
-bin/plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
-bin/value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
-bin/gate --db "$DB" --core-lib "$LIB" &&
-bin/report daily --db "$DB"
+./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
+./sec plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
+./sec value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
+./sec gate --db "$DB" --core-lib "$LIB" &&
+./sec report daily --db "$DB"
 ```
 
 Shadow/staging run. This crosses from decision to staged action but still does not talk to a broker adapter:
 
 ```sh
-bin/recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
-bin/plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
-bin/gate --db "$DB" --core-lib "$LIB" &&
-bin/stage --db "$DB" &&
-bin/report daily --db "$DB"
+./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
+./sec plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
+./sec gate --db "$DB" --core-lib "$LIB" &&
+./sec stage --db "$DB" &&
+./sec report daily --db "$DB"
 ```
 
 Guarded mock submission:
 
 ```sh
-bin/stage --db "$DB" &&
-bin/send --db "$DB" --adapter mock &&
-bin/recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
-bin/report daily --db "$DB"
+./sec stage --db "$DB" &&
+./sec send --db "$DB" --adapter mock &&
+./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
+./sec report daily --db "$DB"
 ```
 
 The executable templates encode those patterns directly:
@@ -221,12 +221,12 @@ examples/mock
 ```text
 include/core.h             C ABI boundary
 core/*.cpp                 deterministic C++ model, valuation, and risk gate
-sec/cli.py                 CLI/service shell using only Python stdlib
-db/sqlite/001_schema.sql   local operational schema, raw facts, periods, canonical observations
+main.go                   Go CLI/service shell
+schema.sql                local operational schema, raw facts, periods, canonical observations
 docs/schemas/              event/control and observation JSON Schemas
 docs/                      intent, requirements, hazards, naming, operations
 tests/                     C++ unit tests
-ci/check                   mechanical repository check
+check                     mechanical repository check
 ```
 
 ## Operating modes

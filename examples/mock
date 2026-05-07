@@ -6,7 +6,7 @@ set -eu
 # mock adapter.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-BIN="$ROOT/bin"
+SEC="$ROOT/sec"
 
 : "${DB:=$ROOT/.sec.db}"
 : "${PORTFOLIO_VALUE_USD:=100000}"
@@ -15,19 +15,19 @@ BIN="$ROOT/bin"
 LIB=${LIB:-$ROOT/build/libfolio.so}
 [ -f "$LIB" ] || LIB="$ROOT/build/libfolio.dylib"
 
-"$BIN/recon" \
+"$SEC" recon \
   --db "$DB" \
   --portfolio-value-usd "$PORTFOLIO_VALUE_USD" \
   --cash-usd "$CASH_USD" \
   --reconciled 1
 
-"$BIN/plan" \
+"$SEC" plan \
   --db "$DB" \
   --core-lib "$LIB" \
   --portfolio-value-usd "$PORTFOLIO_VALUE_USD" \
   --cash-usd "$CASH_USD"
 
-"$BIN/gate" --db "$DB" --core-lib "$LIB"
-"$BIN/stage" --db "$DB"
-"$BIN/send" --db "$DB" --adapter mock
-"$BIN/report" daily --db "$DB"
+"$SEC" gate --db "$DB" --core-lib "$LIB"
+"$SEC" stage --db "$DB"
+"$SEC" send --db "$DB" --adapter mock
+"$SEC" report daily --db "$DB"

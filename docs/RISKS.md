@@ -24,7 +24,7 @@ Evidence:
 
 ```text
 tests/test_core.cpp
-ci/check stale reconciliation smoke path
+check stale reconciliation smoke path
 ```
 
 ## H-002 wrong issuer identity

@@ -32,9 +32,9 @@ ledger mutation code for order/risk state
 14. No STL type is exposed across the C ABI.
 15. No model function is allowed to submit, stage, or mutate broker state.
 
-## 3. Python rules for service shell
+## 3. Go rules for service shell
 
-Python is allowed for orchestration and data movement. It is not the ultimate risk authority.
+Go is used for orchestration and data movement. It is not the ultimate risk authority.
 
 Rules:
 
@@ -48,7 +48,7 @@ no arbitrary SQL in CLI arguments
 network calls require explicit User-Agent where required
 ```
 
-Python code may use dynamic allocation, libraries, and network I/O. It must remain outside the pure C++ core.
+Go code may use dynamic allocation, libraries, SQLite, XML parsing, and network I/O. It must remain outside the pure C++ core.
 
 ## 4. Exit-code convention
 
@@ -66,7 +66,7 @@ Python code may use dynamic allocation, libraries, and network I/O. It must rema
 The repository is acceptable only if this passes:
 
 ```sh
-./ci/check
+./check
 ```
 
-The check script builds the C++ core, runs tests, compiles Python, initializes a database, runs a synthetic model/risk path, and verifies that stale reconciliation blocks approval.
+The check script builds the C++ core and Go CLI, runs tests, initializes a database, runs a synthetic model/risk path, and verifies that stale reconciliation blocks approval.

@@ -1,0 +1,56 @@
+#!/usr/bin/env sh
+set -eu
+
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo >/dev/null
+cmake --build build --parallel >/dev/null
+ctest --test-dir build --output-on-failure
+go build -o build/sec .
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+DB="$TMPDIR/sec.db"
+LIB="build/libfolio.so"
+[ -f "$LIB" ] || LIB="build/libfolio.dylib"
+
+run() {
+  build/sec "$@"
+}
+
+eq() {
+  actual=$(sqlite3 "$DB" "$1")
+  expected=$2
+  test "$actual" = "$expected" || {
+    printf 'assertion failed: %s expected=%s actual=%s\n' "$1" "$expected" "$actual" >&2
+    exit 1
+  }
+}
+
+run init --db "$DB"
+run sym --db "$DB" --cik 0000000001 --symbol AAA --price-usd 10 --adv-usd 10000000 --investable 1
+run sym --db "$DB" --cik 0000000002 --symbol BBB --price-usd 100 --adv-usd 10000000 --investable 1
+run pos --db "$DB" --cik 0000000001 --quantity-shares 0 --market-value-usd 0 --weight-ratio 0
+
+run xbrl --db "$DB" --accession 0000000003-24-000001 --cik 0000000003 \
+  --form 10-Q --filed-at 2024-04-30 --accepted-at 2024-04-30T12:00:00Z \
+  --raw-root "$TMPDIR/raw" --package-root tests/fixtures/sec-package --strict --sleep-s 0
+
+test "$(sqlite3 "$DB" 'select count(*) from source_documents')" -ge 3
+test "$(sqlite3 "$DB" 'select count(*) from xbrl_contexts')" -ge 4
+test "$(sqlite3 "$DB" 'select count(*) from xbrl_units')" -ge 1
+test "$(sqlite3 "$DB" 'select count(*) from dimension_signatures')" -ge 2
+eq "select count(*) from xbrl_facts where accession_number='0000000003-24-000001'" 7
+eq "select count(*) from canonical_observations where security_id=3" 3
+eq "select count(*) from canonical_observations where security_id=3 and dimensional_scope!='consolidated_total'" 0
+
+run ci-seed --db "$DB"
+run recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
+run plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
+run value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
+run gate --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --max-order-notional-usd 20000
+approved=$(sqlite3 "$DB" 'select count(*) from risk_decisions where approved=1')
+test "$approved" -ge 1
+sqlite3 "$DB" "update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1; delete from risk_decisions;"
+run gate --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --max-order-notional-usd 20000
+eq 'select count(*) from risk_decisions where approved=1' 0
+
+echo "check ok"

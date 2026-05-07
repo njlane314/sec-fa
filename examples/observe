@@ -5,7 +5,7 @@ set -eu
 # model and risk gate, then reports. It does not stage or send orders.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-BIN="$ROOT/bin"
+SEC="$ROOT/sec"
 
 : "${DB:=$ROOT/.sec.db}"
 : "${RAW:=$ROOT/raw}"
@@ -20,9 +20,9 @@ BIN="$ROOT/bin"
 LIB=${LIB:-$ROOT/build/libfolio.so}
 [ -f "$LIB" ] || LIB="$ROOT/build/libfolio.dylib"
 
-"$BIN/init" --db "$DB"
+"$SEC" init --db "$DB"
 
-"$BIN/sym" \
+"$SEC" sym \
   --db "$DB" \
   --cik "$CIK" \
   --symbol "$SYMBOL" \
@@ -30,25 +30,25 @@ LIB=${LIB:-$ROOT/build/libfolio.so}
   --adv-usd "$ADV_USD" \
   --investable 1
 
-"$BIN/pos" \
+"$SEC" pos \
   --db "$DB" \
   --cik "$CIK" \
   --quantity-shares 0 \
   --market-value-usd 0 \
   --weight-ratio 0
 
-"$BIN/watch" \
+"$SEC" watch \
   --db "$DB" \
   --cik "$CIK" \
   --user-agent "$UA"
 
-"$BIN/pull" \
+"$SEC" pull \
   --db "$DB" \
   --raw-root "$RAW" \
   --user-agent "$UA"
 
 if [ -n "${ACCESSION:-}" ]; then
-  "$BIN/xbrl" \
+  "$SEC" xbrl \
     --db "$DB" \
     --accession "$ACCESSION" \
     --cik "$CIK" \
@@ -59,10 +59,10 @@ else
   printf '%s\n' 'ACCESSION is not set; skipping xbrl parse step.' >&2
 fi
 
-"$BIN/univ" --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
-"$BIN/recon" --db "$DB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD" --reconciled 1
-"$BIN/plan" --db "$DB" --core-lib "$LIB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD"
-"$BIN/value" --db "$DB" --core-lib "$LIB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD"
-"$BIN/gate" --db "$DB" --core-lib "$LIB"
-"$BIN/report" daily --db "$DB"
-"$BIN/stat" --db "$DB"
+"$SEC" univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
+"$SEC" recon --db "$DB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD" --reconciled 1
+"$SEC" plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD"
+"$SEC" value --db "$DB" --core-lib "$LIB" --portfolio-value-usd "$PORTFOLIO_VALUE_USD" --cash-usd "$CASH_USD"
+"$SEC" gate --db "$DB" --core-lib "$LIB"
+"$SEC" report daily --db "$DB"
+"$SEC" stat --db "$DB"
