@@ -227,14 +227,6 @@ Guarded mock submission:
 ./sec report daily --db "$DB"
 ```
 
-The executable templates encode those patterns directly:
-
-```text
-flows/observe
-flows/shadow
-flows/mock
-```
-
 ## Repository map
 
 ```text
