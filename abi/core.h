@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define FA_ABI_VERSION 2u
+#define FA_ABI_VERSION 3u
 #define FA_SYMBOL_BYTES 16u
 #define FA_REASON_BYTES 128u
 #define FA_DIAGNOSTIC_BYTES 1024u
@@ -259,7 +259,7 @@ typedef struct fa_valuation_v1 {
     char reason[FA_REASON_BYTES];
 } fa_valuation_v1;
 
-typedef struct fa_model_output_v1 {
+typedef struct fa_plan_output_v1 {
     uint32_t abi_version;
     size_t forecast_count;
     fa_forecast_v1* forecasts;
@@ -268,9 +268,9 @@ typedef struct fa_model_output_v1 {
     size_t order_intent_count;
     fa_order_intent_v1* order_intents;
     char diagnostics[FA_DIAGNOSTIC_BYTES];
-} fa_model_output_v1;
+} fa_plan_output_v1;
 
-typedef struct fa_model_output_v2 {
+typedef struct fa_value_output_v1 {
     uint32_t abi_version;
     size_t valuation_count;
     fa_valuation_v1* valuations;
@@ -279,7 +279,7 @@ typedef struct fa_model_output_v2 {
     size_t order_intent_count;
     fa_order_intent_v1* order_intents;
     char diagnostics[FA_DIAGNOSTIC_BYTES];
-} fa_model_output_v2;
+} fa_value_output_v1;
 
 typedef struct fa_risk_decision_v1 {
     uint32_t abi_version;
@@ -290,16 +290,16 @@ typedef struct fa_risk_decision_v1 {
     char reason[FA_REASON_BYTES];
 } fa_risk_decision_v1;
 
-typedef struct fa_risk_output_v1 {
+typedef struct fa_gate_output_v1 {
     uint32_t abi_version;
     size_t decision_count;
     fa_risk_decision_v1* decisions;
     char diagnostics[FA_DIAGNOSTIC_BYTES];
-} fa_risk_output_v1;
+} fa_gate_output_v1;
 
 const char* fa_status_name(fa_status_code code);
 
-fa_status_code fa_model_run_v1(
+fa_status_code fa_plan_v1(
     const fa_canonical_fact_v1* facts,
     size_t fact_count,
     const fa_security_v1* securities,
@@ -308,11 +308,11 @@ fa_status_code fa_model_run_v1(
     size_t position_count,
     const fa_model_config_v1* config,
     const fa_risk_limits_v1* risk_limits,
-    fa_model_output_v1* output);
+    fa_plan_output_v1* output);
 
-void fa_model_output_free_v1(fa_model_output_v1* output);
+void fa_plan_output_free_v1(fa_plan_output_v1* output);
 
-fa_status_code fa_model_run_v2(
+fa_status_code fa_value_v1(
     const fa_statement_snapshot_v1* statements,
     size_t statement_count,
     const fa_security_v1* securities,
@@ -323,19 +323,19 @@ fa_status_code fa_model_run_v2(
     size_t scenario_count,
     const fa_model_config_v1* config,
     const fa_risk_limits_v1* risk_limits,
-    fa_model_output_v2* output);
+    fa_value_output_v1* output);
 
-void fa_model_output_free_v2(fa_model_output_v2* output);
+void fa_value_output_free_v1(fa_value_output_v1* output);
 
-fa_status_code fa_risk_check_v1(
+fa_status_code fa_gate_v1(
     const fa_order_intent_v1* order_intents,
     size_t order_intent_count,
     const fa_security_v1* securities,
     size_t security_count,
     const fa_risk_limits_v1* risk_limits,
-    fa_risk_output_v1* output);
+    fa_gate_output_v1* output);
 
-void fa_risk_output_free_v1(fa_risk_output_v1* output);
+void fa_gate_output_free_v1(fa_gate_output_v1* output);
 
 #ifdef __cplusplus
 }

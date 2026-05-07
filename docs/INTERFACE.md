@@ -4,7 +4,7 @@
 
 The public C ABI is `abi/core.h`. All public structs include `abi_version` and all functions return explicit status codes.
 
-The model function consumes:
+The C++ `fa_plan_v1` entrypoint consumes:
 
 ```text
 canonical facts
@@ -23,7 +23,27 @@ order intents
 diagnostics
 ```
 
-The risk function consumes:
+The C++ `fa_value_v1` entrypoint consumes:
+
+```text
+statement snapshots
+securities
+positions
+valuation scenarios
+model configuration
+risk-limit context
+```
+
+and produces:
+
+```text
+valuations
+target weights
+order intents
+diagnostics
+```
+
+The C++ `fa_gate_v1` entrypoint consumes:
 
 ```text
 order intents

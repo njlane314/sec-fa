@@ -4,24 +4,24 @@ package main
 #cgo CFLAGS: -I${SRCDIR}/../abi
 #include "core.h"
 
-typedef fa_status_code (*fa_risk_check_v1_fn)(
+typedef fa_status_code (*fa_gate_v1_fn)(
     const fa_order_intent_v1*, size_t,
     const fa_security_v1*, size_t,
     const fa_risk_limits_v1*,
-    fa_risk_output_v1*);
-typedef void (*fa_risk_output_free_v1_fn)(fa_risk_output_v1*);
+    fa_gate_output_v1*);
+typedef void (*fa_gate_output_free_v1_fn)(fa_gate_output_v1*);
 
-static fa_status_code sec_risk_check_v1(
+static fa_status_code sec_gate_v1(
     void* fn,
     const fa_order_intent_v1* intents, size_t intent_count,
     const fa_security_v1* securities, size_t security_count,
     const fa_risk_limits_v1* risk_limits,
-    fa_risk_output_v1* output) {
-    return ((fa_risk_check_v1_fn)fn)(
+    fa_gate_output_v1* output) {
+    return ((fa_gate_v1_fn)fn)(
         intents, intent_count, securities, security_count, risk_limits, output);
 }
-static void sec_risk_output_free_v1(void* fn, fa_risk_output_v1* output) {
-    ((fa_risk_output_free_v1_fn)fn)(output);
+static void sec_gate_output_free_v1(void* fn, fa_gate_output_v1* output) {
+    ((fa_gate_output_free_v1_fn)fn)(output);
 }
 */
 import "C"
@@ -31,8 +31,8 @@ import (
 	"unsafe"
 )
 
-func cmdRiskCheck(args []string) error {
-	fs := newFlagSet("risk-check")
+func cmdGate(args []string) error {
+	fs := newFlagSet("gate")
 	dbPath := fs.String("db", "", "")
 	corePath := fs.String("core-lib", "", "")
 	runID := fs.String("run-id", "", "")
@@ -72,14 +72,14 @@ func cmdRiskCheck(args []string) error {
 		return err
 	}
 	limits.max_name_weight_ratio = C.double(*maxNameWeight)
-	var out C.fa_risk_output_v1
-	status := C.sec_risk_check_v1(core.riskCheckV1, intentPtr(intents), C.size_t(len(intents)), securityPtr(securities), C.size_t(len(securities)), &limits, &out)
+	var out C.fa_gate_output_v1
+	status := C.sec_gate_v1(core.gateV1, intentPtr(intents), C.size_t(len(intents)), securityPtr(securities), C.size_t(len(securities)), &limits, &out)
 	diagnostics := cCharArrayString(unsafe.Pointer(&out.diagnostics[0]), diagnosticBytes)
 	if status != C.FA_OK {
-		C.sec_risk_output_free_v1(core.riskOutputFreeV1, &out)
-		return fail(5, "fa_risk_check_v1 failed: %s: %s", core.status(status), diagnostics)
+		C.sec_gate_output_free_v1(core.gateFreeV1, &out)
+		return fail(5, "fa_gate_v1 failed: %s: %s", core.status(status), diagnostics)
 	}
-	defer C.sec_risk_output_free_v1(core.riskOutputFreeV1, &out)
+	defer C.sec_gate_output_free_v1(core.gateFreeV1, &out)
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -102,7 +102,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`, uuidV4(), intentID, uint64(d.security_id), boolIn
 			return err
 		}
 	}
-	event, err := appendEvent(tx, "risk_check_completed", map[string]any{
+	event, err := appendEvent(tx, "gate_completed", map[string]any{
 		"intent_count": len(decisions), "approved_count": approved, "rejected_count": len(decisions) - approved, "diagnostics": diagnostics,
 	})
 	if err != nil {

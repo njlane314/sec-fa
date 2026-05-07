@@ -85,8 +85,8 @@ int main() {
     limits.now_epoch_s = 1800000100;
     limits.max_reconciliation_age_s = 3600;
 
-    fa_model_output_v1 output{};
-    const fa_status_code status = fa_model_run_v1(facts, 8, securities, 2, positions, 1, &config, &limits, &output);
+    fa_plan_output_v1 output{};
+    const fa_status_code status = fa_plan_v1(facts, 8, securities, 2, positions, 1, &config, &limits, &output);
     require(status == FA_OK);
     require(output.forecast_count == 2);
     require(output.target_weight_count == 2);
@@ -95,23 +95,23 @@ int main() {
     require(output.order_intents[0].side == FA_SIDE_BUY);
     require(absd(output.order_intents[0].notional_usd - 10000.0) < 1.0);
 
-    fa_risk_output_v1 risk{};
-    const fa_status_code risk_status = fa_risk_check_v1(output.order_intents, output.order_intent_count,
+    fa_gate_output_v1 risk{};
+    const fa_status_code risk_status = fa_gate_v1(output.order_intents, output.order_intent_count,
                                                         securities, 2, &limits, &risk);
     require(risk_status == FA_OK);
     require(risk.decision_count == 1);
     require(risk.decisions[0].decision == FA_DECISION_APPROVED);
 
     limits.reconciliation_checked_at_epoch_s = 1700000000;
-    fa_risk_output_v1 stale{};
-    const fa_status_code stale_status = fa_risk_check_v1(output.order_intents, output.order_intent_count,
+    fa_gate_output_v1 stale{};
+    const fa_status_code stale_status = fa_gate_v1(output.order_intents, output.order_intent_count,
                                                          securities, 2, &limits, &stale);
     require(stale_status == FA_OK);
     require(stale.decision_count == 1);
     require(stale.decisions[0].decision == FA_DECISION_REJECTED);
 
-    fa_risk_output_free_v1(&stale);
-    fa_risk_output_free_v1(&risk);
-    fa_model_output_free_v1(&output);
+    fa_gate_output_free_v1(&stale);
+    fa_gate_output_free_v1(&risk);
+    fa_plan_output_free_v1(&output);
     return 0;
 }

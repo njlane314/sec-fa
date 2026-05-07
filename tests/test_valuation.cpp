@@ -114,8 +114,8 @@ int main() {
     limits.now_epoch_s = 1800000100;
     limits.max_reconciliation_age_s = 3600;
 
-    fa_model_output_v2 output{};
-    const fa_status_code status = fa_model_run_v2(
+    fa_value_output_v1 output{};
+    const fa_status_code status = fa_value_v1(
         statements, 2, securities, 1, positions, 1, scenarios, 3, &config, &limits, &output);
 
     require(status == FA_OK);
@@ -131,6 +131,6 @@ int main() {
     require(output.order_intents[0].side == FA_SIDE_BUY);
     require(absd(output.order_intents[0].notional_usd - 10000.0) < 1.0);
 
-    fa_model_output_free_v2(&output);
+    fa_value_output_free_v1(&output);
     return 0;
 }

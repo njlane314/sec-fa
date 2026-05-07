@@ -4,17 +4,17 @@ package main
 #cgo CFLAGS: -I${SRCDIR}/../abi
 #include "core.h"
 
-typedef fa_status_code (*fa_model_run_v2_fn)(
+typedef fa_status_code (*fa_value_v1_fn)(
     const fa_statement_snapshot_v1*, size_t,
     const fa_security_v1*, size_t,
     const fa_position_v1*, size_t,
     const fa_valuation_scenario_v1*, size_t,
     const fa_model_config_v1*,
     const fa_risk_limits_v1*,
-    fa_model_output_v2*);
-typedef void (*fa_model_output_free_v2_fn)(fa_model_output_v2*);
+    fa_value_output_v1*);
+typedef void (*fa_value_output_free_v1_fn)(fa_value_output_v1*);
 
-static fa_status_code sec_model_run_v2(
+static fa_status_code sec_value_v1(
     void* fn,
     const fa_statement_snapshot_v1* statements, size_t statement_count,
     const fa_security_v1* securities, size_t security_count,
@@ -22,13 +22,13 @@ static fa_status_code sec_model_run_v2(
     const fa_valuation_scenario_v1* scenarios, size_t scenario_count,
     const fa_model_config_v1* config,
     const fa_risk_limits_v1* risk_limits,
-    fa_model_output_v2* output) {
-    return ((fa_model_run_v2_fn)fn)(
+    fa_value_output_v1* output) {
+    return ((fa_value_v1_fn)fn)(
         statements, statement_count, securities, security_count, positions, position_count,
         scenarios, scenario_count, config, risk_limits, output);
 }
-static void sec_model_output_free_v2(void* fn, fa_model_output_v2* output) {
-    ((fa_model_output_free_v2_fn)fn)(output);
+static void sec_value_output_free_v1(void* fn, fa_value_output_v1* output) {
+    ((fa_value_output_free_v1_fn)fn)(output);
 }
 */
 import "C"
@@ -55,8 +55,8 @@ type statementSnapshot struct {
 	sourceHash          string
 }
 
-func cmdModelRunV2(args []string) error {
-	fs := modelFlagSet("model-run-v2")
+func cmdValue(args []string) error {
+	fs := modelFlagSet("value")
 	if err := parseFlags(fs.fs, args); err != nil {
 		return err
 	}
@@ -127,8 +127,8 @@ func cmdModelRunV2(args []string) error {
 	if err != nil {
 		return err
 	}
-	var out C.fa_model_output_v2
-	status := C.sec_model_run_v2(core.modelRunV2,
+	var out C.fa_value_output_v1
+	status := C.sec_value_v1(core.valueV1,
 		statementPtr(cStatements), C.size_t(len(cStatements)),
 		securityPtr(securities), C.size_t(len(securities)),
 		positionPtr(positions), C.size_t(len(positions)),
@@ -136,10 +136,10 @@ func cmdModelRunV2(args []string) error {
 		&config, &limits, &out)
 	diagnostics := cCharArrayString(unsafe.Pointer(&out.diagnostics[0]), diagnosticBytes)
 	if status != C.FA_OK {
-		C.sec_model_output_free_v2(core.modelFreeV2, &out)
-		return fail(5, "fa_model_run_v2 failed: %s: %s", core.status(status), diagnostics)
+		C.sec_value_output_free_v1(core.valueFreeV1, &out)
+		return fail(5, "fa_value_v1 failed: %s: %s", core.status(status), diagnostics)
 	}
-	defer C.sec_model_output_free_v2(core.modelFreeV2, &out)
+	defer C.sec_value_output_free_v1(core.valueFreeV1, &out)
 	runID := uuidV4()
 	tx, err := db.Begin()
 	if err != nil {
@@ -190,7 +190,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, uuidV4(), runID, uint64(v.security_id), utcNow
 	if err := persistIntents(tx, runID, unsafe.Slice(out.order_intents, int(out.order_intent_count))); err != nil {
 		return err
 	}
-	event, err := appendEvent(tx, "model_run_v2_completed", map[string]any{
+	event, err := appendEvent(tx, "value_completed", map[string]any{
 		"run_id": runID, "statement_count": len(statements), "statement_snapshots_inserted": insertedStatements,
 		"valuation_count": int(out.valuation_count), "target_weight_count": int(out.target_weight_count),
 		"order_intent_count": int(out.order_intent_count), "forecast_outcome_count": int(out.valuation_count),

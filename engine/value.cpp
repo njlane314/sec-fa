@@ -298,7 +298,7 @@ void build_targets_from_valuations(const fa_valuation_v1* valuations,
                                    size_t position_count,
                                    const fa_model_config_v1& config,
                                    const fa_risk_limits_v1& limits,
-                                   fa_model_output_v2* output) {
+                                   fa_value_output_v1* output) {
     double score_sum = 0.0;
     for (size_t i = 0u; i < valuation_count; ++i) {
         score_sum += liquidity_adjusted_valuation_score(valuations[i], securities[i], limits);
@@ -348,7 +348,7 @@ void build_targets_from_valuations(const fa_valuation_v1* valuations,
     output->order_intent_count = intent_count;
 }
 
-bool validate_model_run_v2_inputs(const fa_statement_snapshot_v1* statements,
+bool validate_value_v1_inputs(const fa_statement_snapshot_v1* statements,
                                   size_t statement_count,
                                   const fa_security_v1* securities,
                                   size_t security_count,
@@ -358,7 +358,7 @@ bool validate_model_run_v2_inputs(const fa_statement_snapshot_v1* statements,
                                   size_t scenario_count,
                                   const fa_model_config_v1* config,
                                   const fa_risk_limits_v1* risk_limits,
-                                  fa_model_output_v2* output) {
+                                  fa_value_output_v1* output) {
     if (output == nullptr || config == nullptr || risk_limits == nullptr) {
         return false;
     }
@@ -437,7 +437,7 @@ bool validate_model_run_v2_inputs(const fa_statement_snapshot_v1* statements,
 
 }  // namespace
 
-extern "C" fa_status_code fa_model_run_v2(
+extern "C" fa_status_code fa_value_v1(
     const fa_statement_snapshot_v1* statements,
     size_t statement_count,
     const fa_security_v1* securities,
@@ -448,7 +448,7 @@ extern "C" fa_status_code fa_model_run_v2(
     size_t scenario_count,
     const fa_model_config_v1* config,
     const fa_risk_limits_v1* risk_limits,
-    fa_model_output_v2* output) {
+    fa_value_output_v1* output) {
 
     if (output == nullptr) {
         return FA_ERR_NULL_ARGUMENT;
@@ -466,7 +466,7 @@ extern "C" fa_status_code fa_model_run_v2(
         kernel::set_diag(output->diagnostics, sizeof(output->diagnostics), "null config or risk_limits");
         return FA_ERR_NULL_ARGUMENT;
     }
-    if (!validate_model_run_v2_inputs(statements, statement_count, securities, security_count,
+    if (!validate_value_v1_inputs(statements, statement_count, securities, security_count,
                                       positions, position_count, scenarios, scenario_count,
                                       config, risk_limits, output)) {
         return FA_ERR_INVALID_INPUT;
@@ -481,7 +481,7 @@ extern "C" fa_status_code fa_model_run_v2(
     if (security_count > 0u &&
         (output->valuations == nullptr || output->target_weights == nullptr ||
          output->order_intents == nullptr)) {
-        fa_model_output_free_v2(output);
+        fa_value_output_free_v1(output);
         kernel::set_diag(output->diagnostics, sizeof(output->diagnostics), "allocation failed");
         return FA_ERR_ALLOCATION_FAILED;
     }
@@ -499,14 +499,14 @@ extern "C" fa_status_code fa_model_run_v2(
             statements, statement_count, security.security_id, risk_limits->now_epoch_s,
             config->max_fact_age_s, &pair);
         if (!scan_ok) {
-            fa_model_output_free_v2(output);
+            fa_value_output_free_v1(output);
             kernel::set_diag(output->diagnostics, sizeof(output->diagnostics),
                              "statement ABI version mismatch");
             return FA_ERR_BAD_ABI_VERSION;
         }
 
         if (!value_security(security, pair, scenarios, scenario_count, &output->valuations[i])) {
-            fa_model_output_free_v2(output);
+            fa_value_output_free_v1(output);
             kernel::set_diag(output->diagnostics, sizeof(output->diagnostics),
                              "valuation calculation failed");
             return FA_ERR_INVALID_INPUT;
@@ -522,7 +522,7 @@ extern "C" fa_status_code fa_model_run_v2(
                                   positions, position_count, *config, *risk_limits, output);
 
     (void)std::snprintf(output->diagnostics, sizeof(output->diagnostics),
-                        "model_run_v2_ok securities=%zu investable=%zu statements=%zu valuations=%zu intents=%zu",
+                        "value_ok securities=%zu investable=%zu statements=%zu valuations=%zu intents=%zu",
                         security_count, investable_count, statement_count, valued_count,
                         output->order_intent_count);
     return FA_OK;

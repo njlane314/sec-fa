@@ -164,7 +164,7 @@ extern "C" const char* fa_status_name(fa_status_code code) {
     }
 }
 
-extern "C" void fa_model_output_free_v1(fa_model_output_v1* output) {
+extern "C" void fa_plan_output_free_v1(fa_plan_output_v1* output) {
     if (output == nullptr) {
         return;
     }
@@ -180,7 +180,7 @@ extern "C" void fa_model_output_free_v1(fa_model_output_v1* output) {
     output->diagnostics[0] = '\0';
 }
 
-extern "C" void fa_model_output_free_v2(fa_model_output_v2* output) {
+extern "C" void fa_value_output_free_v1(fa_value_output_v1* output) {
     if (output == nullptr) {
         return;
     }
@@ -196,7 +196,7 @@ extern "C" void fa_model_output_free_v2(fa_model_output_v2* output) {
     output->diagnostics[0] = '\0';
 }
 
-extern "C" void fa_risk_output_free_v1(fa_risk_output_v1* output) {
+extern "C" void fa_gate_output_free_v1(fa_gate_output_v1* output) {
     if (output == nullptr) {
         return;
     }

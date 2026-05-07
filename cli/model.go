@@ -4,29 +4,29 @@ package main
 #cgo CFLAGS: -I${SRCDIR}/../abi
 #include "core.h"
 
-typedef fa_status_code (*fa_model_run_v1_fn)(
+typedef fa_status_code (*fa_plan_v1_fn)(
     const fa_canonical_fact_v1*, size_t,
     const fa_security_v1*, size_t,
     const fa_position_v1*, size_t,
     const fa_model_config_v1*,
     const fa_risk_limits_v1*,
-    fa_model_output_v1*);
-typedef void (*fa_model_output_free_v1_fn)(fa_model_output_v1*);
+    fa_plan_output_v1*);
+typedef void (*fa_plan_output_free_v1_fn)(fa_plan_output_v1*);
 
-static fa_status_code sec_model_run_v1(
+static fa_status_code sec_plan_v1(
     void* fn,
     const fa_canonical_fact_v1* facts, size_t fact_count,
     const fa_security_v1* securities, size_t security_count,
     const fa_position_v1* positions, size_t position_count,
     const fa_model_config_v1* config,
     const fa_risk_limits_v1* risk_limits,
-    fa_model_output_v1* output) {
-    return ((fa_model_run_v1_fn)fn)(
+    fa_plan_output_v1* output) {
+    return ((fa_plan_v1_fn)fn)(
         facts, fact_count, securities, security_count, positions, position_count,
         config, risk_limits, output);
 }
-static void sec_model_output_free_v1(void* fn, fa_model_output_v1* output) {
-    ((fa_model_output_free_v1_fn)fn)(output);
+static void sec_plan_output_free_v1(void* fn, fa_plan_output_v1* output) {
+    ((fa_plan_output_free_v1_fn)fn)(output);
 }
 */
 import "C"
@@ -41,8 +41,8 @@ import (
 	"unsafe"
 )
 
-func cmdModelRun(args []string) error {
-	fs := modelFlagSet("model-run")
+func cmdPlan(args []string) error {
+	fs := modelFlagSet("plan")
 	if err := parseFlags(fs.fs, args); err != nil {
 		return err
 	}
@@ -83,18 +83,18 @@ func cmdModelRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	var out C.fa_model_output_v1
-	status := C.sec_model_run_v1(core.modelRunV1,
+	var out C.fa_plan_output_v1
+	status := C.sec_plan_v1(core.planV1,
 		factPtr(facts), C.size_t(len(facts)),
 		securityPtr(securities), C.size_t(len(securities)),
 		positionPtr(positions), C.size_t(len(positions)),
 		&config, &limits, &out)
 	diagnostics := cCharArrayString(unsafe.Pointer(&out.diagnostics[0]), diagnosticBytes)
 	if status != C.FA_OK {
-		C.sec_model_output_free_v1(core.modelFreeV1, &out)
-		return fail(5, "fa_model_run_v1 failed: %s: %s", core.status(status), diagnostics)
+		C.sec_plan_output_free_v1(core.planFreeV1, &out)
+		return fail(5, "fa_plan_v1 failed: %s: %s", core.status(status), diagnostics)
 	}
-	defer C.sec_model_output_free_v1(core.modelFreeV1, &out)
+	defer C.sec_plan_output_free_v1(core.planFreeV1, &out)
 	runID := uuidV4()
 	tx, err := db.Begin()
 	if err != nil {
@@ -125,7 +125,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, runID, uint64(f.security_id), float64(f.revenu
 	if err := persistIntents(tx, runID, intents); err != nil {
 		return err
 	}
-	event, err := appendEvent(tx, "model_run_completed", map[string]any{
+	event, err := appendEvent(tx, "plan_completed", map[string]any{
 		"run_id": runID, "forecast_count": int(out.forecast_count), "target_weight_count": int(out.target_weight_count),
 		"order_intent_count": int(out.order_intent_count), "diagnostics": diagnostics,
 	})

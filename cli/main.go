@@ -55,12 +55,12 @@ func run(args []string) error {
 		return cmdXBRLParse(rest)
 	case "broker-reconcile":
 		return cmdBrokerReconcile(rest)
-	case "model-run":
-		return cmdModelRun(rest)
-	case "model-run-v2":
-		return cmdModelRunV2(rest)
-	case "risk-check":
-		return cmdRiskCheck(rest)
+	case "plan":
+		return cmdPlan(rest)
+	case "value":
+		return cmdValue(rest)
+	case "gate":
+		return cmdGate(rest)
 	case "order-stage":
 		return cmdOrderStage(rest)
 	case "broker-submit":
@@ -107,11 +107,11 @@ func aliasCommand(cmd string) string {
 	case "recon":
 		return "broker-reconcile"
 	case "plan":
-		return "model-run"
+		return "plan"
 	case "value":
-		return "model-run-v2"
+		return "value"
 	case "gate":
-		return "risk-check"
+		return "gate"
 	case "stage":
 		return "order-stage"
 	case "send":

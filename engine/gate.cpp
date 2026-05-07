@@ -3,13 +3,13 @@
 #include <cstdio>
 #include <cstdlib>
 
-extern "C" fa_status_code fa_risk_check_v1(
+extern "C" fa_status_code fa_gate_v1(
     const fa_order_intent_v1* order_intents,
     size_t order_intent_count,
     const fa_security_v1* securities,
     size_t security_count,
     const fa_risk_limits_v1* risk_limits,
-    fa_risk_output_v1* output) {
+    fa_gate_output_v1* output) {
 
     if (output == nullptr) {
         return FA_ERR_NULL_ARGUMENT;
@@ -52,7 +52,7 @@ extern "C" fa_status_code fa_risk_check_v1(
     double aggregate_buy_notional = 0.0;
     for (size_t i = 0u; i < order_intent_count; ++i) {
         if (!kernel::order_intent_has_valid_abi(order_intents[i])) {
-            fa_risk_output_free_v1(output);
+            fa_gate_output_free_v1(output);
             kernel::set_diag(output->diagnostics, sizeof(output->diagnostics), "order intent ABI version mismatch");
             return FA_ERR_BAD_ABI_VERSION;
         }
@@ -133,7 +133,7 @@ extern "C" fa_status_code fa_risk_check_v1(
 
     output->decision_count = order_intent_count;
     (void)std::snprintf(output->diagnostics, sizeof(output->diagnostics),
-                        "risk_check_ok intents=%zu reconciliation_fresh=%d aggregate_buy_notional=%.2f",
+                        "gate_ok intents=%zu reconciliation_fresh=%d aggregate_buy_notional=%.2f",
                         order_intent_count, reconciliation_fresh ? 1 : 0, aggregate_buy_notional);
     return FA_OK;
 }

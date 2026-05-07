@@ -150,7 +150,7 @@ double growth_from_pair(const MetricPair& pair, double max_abs_growth, bool* usa
     return clamp_double(raw_growth, -max_abs_growth, max_abs_growth);
 }
 
-bool validate_model_run_v1_inputs(const fa_canonical_fact_v1* facts,
+bool validate_plan_v1_inputs(const fa_canonical_fact_v1* facts,
                                   size_t fact_count,
                                   const fa_security_v1* securities,
                                   size_t security_count,
@@ -158,7 +158,7 @@ bool validate_model_run_v1_inputs(const fa_canonical_fact_v1* facts,
                                   size_t position_count,
                                   const fa_model_config_v1* config,
                                   const fa_risk_limits_v1* risk_limits,
-                                  fa_model_output_v1* output) {
+                                  fa_plan_output_v1* output) {
     if (output == nullptr || config == nullptr || risk_limits == nullptr) {
         return false;
     }
@@ -219,7 +219,7 @@ bool validate_model_run_v1_inputs(const fa_canonical_fact_v1* facts,
 
 }  // namespace
 
-extern "C" fa_status_code fa_model_run_v1(
+extern "C" fa_status_code fa_plan_v1(
     const fa_canonical_fact_v1* facts,
     size_t fact_count,
     const fa_security_v1* securities,
@@ -228,7 +228,7 @@ extern "C" fa_status_code fa_model_run_v1(
     size_t position_count,
     const fa_model_config_v1* config,
     const fa_risk_limits_v1* risk_limits,
-    fa_model_output_v1* output) {
+    fa_plan_output_v1* output) {
 
     if (output == nullptr) {
         return FA_ERR_NULL_ARGUMENT;
@@ -246,7 +246,7 @@ extern "C" fa_status_code fa_model_run_v1(
         kernel::set_diag(output->diagnostics, sizeof(output->diagnostics), "null config or risk_limits");
         return FA_ERR_NULL_ARGUMENT;
     }
-    if (!validate_model_run_v1_inputs(facts, fact_count, securities, security_count, positions, position_count,
+    if (!validate_plan_v1_inputs(facts, fact_count, securities, security_count, positions, position_count,
                                       config, risk_limits, output)) {
         return FA_ERR_INVALID_INPUT;
     }
@@ -256,7 +256,7 @@ extern "C" fa_status_code fa_model_run_v1(
     output->order_intents = static_cast<fa_order_intent_v1*>(std::calloc(security_count, sizeof(fa_order_intent_v1)));
     if ((security_count > 0u) &&
         (output->forecasts == nullptr || output->target_weights == nullptr || output->order_intents == nullptr)) {
-        fa_model_output_free_v1(output);
+        fa_plan_output_free_v1(output);
         kernel::set_diag(output->diagnostics, sizeof(output->diagnostics), "allocation failed");
         return FA_ERR_ALLOCATION_FAILED;
     }
@@ -290,7 +290,7 @@ extern "C" fa_status_code fa_model_run_v1(
             facts, fact_count, security.security_id, FA_METRIC_NET_INCOME,
             risk_limits->now_epoch_s, config->max_fact_age_s, &earnings);
         if (!revenue_scan_ok || !earnings_scan_ok) {
-            fa_model_output_free_v1(output);
+            fa_plan_output_free_v1(output);
             kernel::set_diag(output->diagnostics, sizeof(output->diagnostics), "fact ABI version mismatch");
             return FA_ERR_BAD_ABI_VERSION;
         }
@@ -380,7 +380,7 @@ extern "C" fa_status_code fa_model_run_v1(
     output->target_weight_count = security_count;
     output->order_intent_count = intent_count;
     (void)std::snprintf(output->diagnostics, sizeof(output->diagnostics),
-                        "model_run_ok securities=%zu investable=%zu facts=%zu intents=%zu",
+                        "plan_ok securities=%zu investable=%zu facts=%zu intents=%zu",
                         security_count, investable_count, fact_count, intent_count);
     return FA_OK;
 }

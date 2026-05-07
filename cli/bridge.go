@@ -26,14 +26,14 @@ import (
 )
 
 type coreLib struct {
-	handle           unsafe.Pointer
-	statusName       unsafe.Pointer
-	modelRunV1       unsafe.Pointer
-	modelFreeV1      unsafe.Pointer
-	modelRunV2       unsafe.Pointer
-	modelFreeV2      unsafe.Pointer
-	riskCheckV1      unsafe.Pointer
-	riskOutputFreeV1 unsafe.Pointer
+	handle      unsafe.Pointer
+	statusName  unsafe.Pointer
+	planV1      unsafe.Pointer
+	planFreeV1  unsafe.Pointer
+	valueV1     unsafe.Pointer
+	valueFreeV1 unsafe.Pointer
+	gateV1      unsafe.Pointer
+	gateFreeV1  unsafe.Pointer
 }
 
 func loadCore(path string) (*coreLib, error) {
@@ -63,22 +63,22 @@ func loadCore(path string) (*coreLib, error) {
 	if lib.statusName, err = load("fa_status_name"); err != nil {
 		return nil, err
 	}
-	if lib.modelRunV1, err = load("fa_model_run_v1"); err != nil {
+	if lib.planV1, err = load("fa_plan_v1"); err != nil {
 		return nil, err
 	}
-	if lib.modelFreeV1, err = load("fa_model_output_free_v1"); err != nil {
+	if lib.planFreeV1, err = load("fa_plan_output_free_v1"); err != nil {
 		return nil, err
 	}
-	if lib.modelRunV2, err = load("fa_model_run_v2"); err != nil {
+	if lib.valueV1, err = load("fa_value_v1"); err != nil {
 		return nil, err
 	}
-	if lib.modelFreeV2, err = load("fa_model_output_free_v2"); err != nil {
+	if lib.valueFreeV1, err = load("fa_value_output_free_v1"); err != nil {
 		return nil, err
 	}
-	if lib.riskCheckV1, err = load("fa_risk_check_v1"); err != nil {
+	if lib.gateV1, err = load("fa_gate_v1"); err != nil {
 		return nil, err
 	}
-	if lib.riskOutputFreeV1, err = load("fa_risk_output_free_v1"); err != nil {
+	if lib.gateFreeV1, err = load("fa_gate_output_free_v1"); err != nil {
 		return nil, err
 	}
 	return lib, nil

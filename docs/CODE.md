@@ -30,7 +30,7 @@ ledger mutation code for order/risk state
 12. Static analysis must pass before release.
 13. Public structs are versioned by `abi_version`.
 14. No STL type is exposed across the C ABI.
-15. No model function is allowed to submit, stage, or mutate broker state.
+15. No plan or value function is allowed to submit, stage, or mutate broker state.
 
 ## 3. Go rules for service shell
 
