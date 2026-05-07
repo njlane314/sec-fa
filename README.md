@@ -7,23 +7,23 @@ SEC ingestion, canonical fact construction, deterministic model execution, portf
 
 ## System architecture
 
-```text
-SEC / market data
-      │
-      ▼
-[ingestion services] ──► [raw immutable object store]
-      │                         │
-      ▼                         ▼
-[parser / normalizer] ──► [SQLite canonical store]
-      │                         │
-      ▼                         ▼
-[feature builder] ──► [C++ modelling / portfolio library]
-      │                         │
-      ▼                         ▼
-[order-intent engine] ─► [risk gate] ─► [IBKR adapter]
-      │                         │              │
-      ▼                         ▼              ▼
-[alerts/UI/MCP]       [audit ledger]     [broker reconciliation]
+```mermaid
+flowchart TB
+    source["SEC / market data"] --> ingest["ingestion services"]
+    ingest --> raw["raw immutable object store"]
+    ingest --> parser["parser / normalizer"]
+    raw --> store["SQLite canonical store"]
+    parser --> store
+    parser --> features["feature builder"]
+    store --> model["C++ modelling / portfolio library"]
+    features --> model
+    features --> intents["order-intent engine"]
+    model --> gate["risk gate"]
+    intents --> gate
+    gate --> ibkr["IBKR adapter"]
+    intents --> alerts["alerts / UI / MCP"]
+    gate --> ledger["audit ledger"]
+    ibkr --> recon["broker reconciliation"]
 ```
 
 ## Non-negotiable design choices
@@ -111,26 +111,24 @@ halt
 
 The programs compose through the database, immutable raw store, and append-only ledger rather than through textual stdin/stdout filters. A normal operator sequence is:
 
-```text
-init
-  │
-  ├── sym
-  └── pos
+```mermaid
+flowchart TB
+    init["init"] --> sym["sym"]
+    init --> pos["pos"]
 
-watch ──► pull ──► xbrl ──► univ
-                                  │
-recon ─────────────────────────────┤
-                                  ▼
-                           plan or value
-                                  ▼
-                                gate
-                                  ▼
-                                stage
-                                  ▼
-                                send
-                                  ▼
-                           recon ──► report
-                                  └──► ping
+    watch["watch"] --> pull["pull"]
+    pull --> xbrl["xbrl"]
+    xbrl --> univ["univ"]
+
+    univ --> run["plan or value"]
+    recon_in["recon"] --> run
+
+    run --> gate["gate"]
+    gate --> stage["stage"]
+    stage --> send["send"]
+    send --> recon_out["recon"]
+    recon_out --> report["report"]
+    recon_out --> ping["ping"]
 ```
 
 `comp` is reserved for a future companyfacts fallback/reconciliation importer. `value` runs the newer valuation path.
@@ -221,7 +219,16 @@ examples/mock
 ```text
 include/core.h             C ABI boundary
 core/*.cpp                 deterministic C++ model, valuation, and risk gate
-main.go                   Go CLI/service shell
+main.go                   Go command dispatcher
+state.go                  SQLite state, schema initialization, securities, positions
+ingest.go                 SEC submissions watcher and archive fetcher
+xbrl.go, xml.go           XBRL package parsing and XML helpers
+bridge.go                 dynamic C++ library loading and C string helpers
+model.go                  v1 model run and shared ABI conversions
+value.go                  v2 valuation run and statement builder
+risk.go                   C++ risk gate command
+cmd.go                    staging, mock submission, modes, status, reports
+util.go, const.go         shared helpers and canonical metric constants
 schema.sql                local operational schema, raw facts, periods, canonical observations
 docs/schemas/              event/control and observation JSON Schemas
 docs/                      intent, requirements, hazards, naming, operations
