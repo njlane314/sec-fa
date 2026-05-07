@@ -1,4 +1,4 @@
-package daemon
+package main
 
 import (
 	"bytes"
@@ -79,7 +79,7 @@ type commandOutput struct {
 
 var errNoWork = errors.New("no work")
 
-func Main() {
+func daemonMain() {
 	cfg := parseFlags()
 	db, err := sql.Open("sqlite3", cfg.dbPath+"?_foreign_keys=on")
 	if err != nil {

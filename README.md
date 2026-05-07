@@ -302,10 +302,9 @@ abi/core.h       C ABI boundary
 engine/*.cpp     deterministic C++ model, valuation, and risk gate
 cli/             Rust CLI orchestration package
 filings/         Rust SEC filing parser crate
-server/          Go SEC HTTP proxy implementation
-daemon/          Go durable state worker implementation
-cmd/secd/        Go HTTP proxy entrypoint
-cmd/sec-daemon/  Go worker entrypoint, built as sec-watchd/sec-pulld/etc
+server.go        Go SEC HTTP proxy implementation, built as secd
+daemon.go        Go durable state worker implementation, built as sec-*d
+main.go          Go entrypoint dispatch by executable name
 schema.sql       local operational schema, raw facts, periods, canonical observations
 docs/contracts/  line-oriented event/control and observation contracts
 docs/            intent, requirements, hazards, naming, operations

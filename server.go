@@ -1,4 +1,4 @@
-package server
+package main
 
 import (
 	"context"
@@ -9,14 +9,13 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
 
 const defaultUserAgent = "sec-fa operator@example.invalid"
 
-func Main() {
+func serverMain() {
 	addr := getenv("SEC_FA_ADDR", ":8080")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthz)
@@ -99,11 +98,4 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		_, _ = fmt.Fprintln(w, `{"status":"encode_error"}`)
 	}
-}
-
-func getenv(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
-	}
-	return fallback
 }

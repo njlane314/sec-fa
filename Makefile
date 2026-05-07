@@ -13,13 +13,13 @@ build:
 	$(CARGO) build --release --workspace
 	mkdir -p build
 	cp target/release/sec build/sec
-	$(GO) build -o build/secd ./cmd/secd
+	$(GO) build -o build/secd .
 	$(MAKE) daemons
 
 daemons:
 	mkdir -p build
 	@for daemon in $(DAEMONS); do \
-		echo "building $$daemon"; $(GO) build -o "build/$$daemon" ./cmd/sec-daemon; \
+		echo "building $$daemon"; $(GO) build -o "build/$$daemon" .; \
 	done
 
 test: build

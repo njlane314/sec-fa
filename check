@@ -58,7 +58,7 @@ fi
 
 step "static gate: formatting and source boundaries"
 sh -n "$0"
-gofmt_files=$(find cmd server daemon -name "*.go" -print 2>/dev/null | xargs gofmt -l)
+gofmt_files=$(find . -maxdepth 1 -name "*.go" -print | xargs gofmt -l)
 if [ -n "$gofmt_files" ]; then
   printf '%s\n' "$gofmt_files" >&2
   fail "Go files need gofmt"
@@ -113,9 +113,9 @@ cargo build --release --workspace >&2
 cp target/release/sec "$BUILD_DIR/sec"
 go test ./... >&2
 go vet ./... >&2
-go build -o "$BUILD_DIR/secd" ./cmd/secd >&2
+go build -o "$BUILD_DIR/secd" . >&2
 for daemon in sec-watchd sec-pulld sec-xbrld sec-pland sec-gated sec-staged sec-submitd sec-recond sec-notifyd; do
-  go build -o "$BUILD_DIR/$daemon" ./cmd/sec-daemon >&2
+  go build -o "$BUILD_DIR/$daemon" . >&2
 done
 
 TMPDIR=$(mktemp -d)
