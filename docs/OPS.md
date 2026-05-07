@@ -63,7 +63,7 @@ export SEC_USER_AGENT="Your Company admin@example.com"
   --raw-root /var/lib/sec/raw
 ```
 
-`watch` records filing metadata from SEC submissions, `pull` reads the SEC accession `index.json` and stores XBRL-relevant package artifacts unchanged, and `xbrl` infers form, filing date, acceptance time, and primary document from the stored filing row. The parser then parses inline-XBRL and classic-XBRL contexts, units, dimensions, and raw facts before invoking the canonical observation resolver. Companyfacts remains a design fallback, but the Go CLI's primary path is accession XBRL.
+`watch` records filing metadata from SEC submissions, `pull` reads the SEC accession `index.json` and stores XBRL-relevant package artifacts unchanged, and `xbrl` infers form, filing date, acceptance time, and primary document from the stored filing row. The parser then parses inline-XBRL and classic-XBRL contexts, units, dimensions, and raw facts before invoking the canonical observation resolver. Companyfacts remains a design fallback, but the Rust CLI's primary path is accession XBRL.
 
 ## 6. Reconciliation snapshot
 

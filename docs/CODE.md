@@ -32,9 +32,9 @@ ledger mutation code for order/risk state
 14. No STL type is exposed across the C ABI.
 15. No portfolio-plan or valuation-plan function is allowed to submit, stage, or mutate broker state.
 
-## 3. Go rules for service shell
+## 3. Rust CLI and Go service rules
 
-Go is used for orchestration and data movement. It is not the ultimate risk authority.
+Rust is used for the CLI/parser and Go is used for network-facing service work. Neither is the ultimate risk authority.
 
 Rules:
 
@@ -48,11 +48,11 @@ no arbitrary SQL in CLI arguments
 network calls require explicit User-Agent where required
 ```
 
-Go code may use dynamic allocation, libraries, SQLite, XML parsing, and network I/O. It must remain outside the pure C++ core.
+Rust and Go code may use dynamic allocation, libraries, SQLite, XML parsing, and network I/O. They must remain outside the pure C++ core.
 
-The accession XBRL parser and canonical observation resolver in `cli/xbrl.go` are explicit Class B data logic, not mere orchestration. They may remain in Go because XBRL parsing and source-fact normalization are messy data-ingestion work, but their resolver rules must stay named, tested, and auditable. They must not stage, submit, or approve orders. If canonicalization becomes part of execution authority, it must move behind a separate reviewed engine boundary instead of being hidden inside CLI command flow.
+The accession XBRL parser and canonical observation resolver in `rust/sec-filings` are explicit Class B data logic, not mere orchestration. They may remain in Rust because XBRL parsing and source-fact normalization are messy data-ingestion work, but their resolver rules must stay named, tested, and auditable. They must not stage, submit, or approve orders. If canonicalization becomes part of execution authority, it must move behind a separate reviewed engine boundary instead of being hidden inside CLI command flow.
 
-The Go `value` command is orchestration only for valuation inputs: it loads canonical observations, calls `fa_build_statement_snapshots_v1`, then persists the returned statement snapshots. It must not rebuild TTM flows, choose statement anchors, or assign statement-quality flags in Go.
+The Rust `value` command is orchestration only for valuation inputs: it loads canonical observations, calls `fa_build_statement_snapshots_v1`, then persists the returned statement snapshots. It must not rebuild TTM flows, choose statement anchors, or assign statement-quality flags in Rust.
 
 ## 4. Exit-code convention
 
@@ -73,4 +73,4 @@ The repository is acceptable only if this passes:
 ./check
 ```
 
-The check script builds the C++ core and Go CLI, runs tests, initializes a database, runs a synthetic model/risk path, and verifies that stale reconciliation blocks approval.
+The check script builds the C++ core, Rust CLI/parser, and Go service, runs tests, initializes a database, runs a synthetic model/risk path, and verifies that stale reconciliation blocks approval.

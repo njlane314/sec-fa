@@ -52,12 +52,13 @@ Implemented:
 - Deterministic baseline fundamental model over canonical facts.
 - Deterministic C++ statement-snapshot builder and valuation model over canonical observations and explicit scenario assumptions.
 - Hard C++ risk gate for order intents.
-- Go CLI shell for SQLite state movement, SEC/XBRL package parsing, model execution, risk checks, reports, and guarded mock submission.
+- Rust CLI shell for SQLite state movement, SEC/XBRL package parsing, model execution, risk checks, reports, and guarded mock submission.
+- Go `secd` HTTP service for network-facing SEC fetch/proxy work.
 - SQLite operational database for local/single-node operation.
 - SEC submissions watcher and raw filing fetcher using SEC public endpoints.
-- SEC accession-level inline-XBRL/classic-XBRL package parser that stores source documents, contexts, units, dimensions, and raw facts before canonical resolution.
-- Go XBRL canonical observation resolution is explicit Class B data logic; it is not part of the order-execution authority.
-- SEC `companyfacts` importer retained as a design path; the Go CLI currently uses accession XBRL as the primary ingestion path.
+- Rust SEC accession-level inline-XBRL/classic-XBRL package parser that stores source documents, contexts, units, dimensions, and raw facts before canonical resolution.
+- Rust XBRL canonical observation resolution is explicit Class B data logic; it is not part of the order-execution authority.
+- SEC `companyfacts` importer retained as a design path; the Rust CLI currently uses accession XBRL as the primary ingestion path.
 - CLI commands for securities, positions, model runs, risk checks, order staging, broker reconciliation snapshots, reports, and notifications.
 - Bulk security-master CSV import for issuer-level universes.
 - Batch issuer ingest that discovers, fetches, and parses financial 10-K/10-Q filings only.
@@ -298,7 +299,9 @@ Guarded mock submission:
 ```text
 abi/core.h       C ABI boundary
 engine/*.cpp     deterministic C++ model, valuation, and risk gate
-cli/             Go orchestration package
+rust/sec-cli/    Rust CLI orchestration package
+rust/sec-filings/ Rust SEC filing parser crate
+cmd/secd/        Go HTTP/service process
 schema.sql       local operational schema, raw facts, periods, canonical observations
 docs/contracts/  line-oriented event/control and observation contracts
 docs/            intent, requirements, hazards, naming, operations

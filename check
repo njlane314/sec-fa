@@ -42,6 +42,7 @@ forbid_contains() {
 }
 
 need awk
+need cargo
 need cmake
 need ctest
 need go
@@ -57,7 +58,7 @@ fi
 
 step "static gate: formatting and source boundaries"
 sh -n "$0"
-gofmt_files=$(gofmt -l cli/*.go)
+gofmt_files=$(gofmt -l cmd/secd/*.go)
 if [ -n "$gofmt_files" ]; then
   printf '%s\n' "$gofmt_files" >&2
   fail "Go files need gofmt"
@@ -70,11 +71,11 @@ forbid_contains abi/core.h '\bstd::|<[[:space:]]*(vector|string|array|span|map|u
 
 require_contains abi/core.h '^#define FA_ABI_VERSION 4u$'
 require_contains abi/core.h 'fa_build_statement_snapshots_v1'
-require_contains cli/value.go 'fa_build_statement_snapshots_v1'
-require_contains cli/value.go 'statement_builder_diagnostics'
-forbid_contains cli/value.go 'func[[:space:]]+(buildLatestStatements|buildStatement|latestFlowTTM|latestPoint)[[:space:]]*\('
-forbid_contains cli/value.go 'type[[:space:]]+metricPoint\b'
-require_contains cli/cmd.go 'requireFreshBrokerReconciliation'
+require_contains rust/sec-cli/src/fa_core.rs 'fa_build_statement_snapshots_v1'
+require_contains rust/sec-cli/src/main.rs 'statement_builder_diagnostics'
+forbid_contains rust/sec-cli/src/main.rs 'fn[[:space:]]+(build_latest_statements|build_statement|latest_flow_ttm|latest_point)[[:space:]]*\('
+forbid_contains rust/sec-cli/src/main.rs 'struct[[:space:]]+MetricPoint\b'
+require_contains rust/sec-cli/src/main.rs 'require_fresh_broker_reconciliation'
 require_contains docs/CODE.md 'explicit Class B data logic'
 require_contains docs/REQS.md 'FA-MODEL-012'
 
@@ -106,10 +107,13 @@ for symbol in fa_plan_v1 fa_value_v1 fa_gate_v1; do
   fi
 done
 
-step "build gate: Go tests, vet, and CLI binary"
-go test ./... >&2
-go vet ./... >&2
-go build -o "$BUILD_DIR/sec" ./cli >&2
+step "build gate: Rust CLI/parser and Go server"
+cargo test --workspace >&2
+cargo build --release --workspace >&2
+cp target/release/sec "$BUILD_DIR/sec"
+go test ./cmd/secd >&2
+go vet ./cmd/secd >&2
+go build -o "$BUILD_DIR/secd" ./cmd/secd >&2
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
