@@ -75,17 +75,23 @@ Not implemented by design in this first drop:
 ```sh
 cd sec-fa
 make check
-./sec init --db .sec.db
-./sec sym --db .sec.db --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
-./sec xbrl --db .sec.db --accession 0000320193-24-000123 --cik 0000320193 --symbol AAPL --raw-root raw --user-agent "Your Name your.email@example.com"
-./sec univ --db .sec.db --name us_core --min-adv-usd 0 --min-fact-count 2
-./sec recon --db .sec.db --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
-./sec plan --db .sec.db --core-lib build/libfolio.so --portfolio-value-usd 100000 --cash-usd 100000
-./sec gate --db .sec.db --core-lib build/libfolio.so
-./sec report daily --db .sec.db
+make setup-db
+
+DB=.fa.db
+./sec sym --db "$DB" --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
+./sec xbrl --db "$DB" --accession 0000320193-24-000123 --cik 0000320193 --symbol AAPL --raw-root raw --user-agent "Your Name your.email@example.com"
+./sec univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
+./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
+./sec plan --db "$DB" --core-lib build/libfolio.so --portfolio-value-usd 100000 --cash-usd 100000
+./sec gate --db "$DB" --core-lib build/libfolio.so
+./sec report daily --db "$DB"
 ```
 
 On macOS the shared library is usually `build/libfolio.dylib`. On Linux it is `build/libfolio.so`.
+
+For database setup only, use `make setup-db`. It creates or upgrades `.fa.db`.
+The equivalent direct CLI command is `./sec init`; pass `--db /path/to/file.db`
+when you need a specific database path.
 
 
 ## Accounting observation model
@@ -159,7 +165,7 @@ recon ---------------------+
 Initialize and seed state:
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 
 ./sec init --db "$DB" &&
 ./sec sym --db "$DB" \
@@ -178,7 +184,7 @@ DB=.sec.db
 Ingest data and build a universe:
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 RAW=raw
 UA="Your Name your.email@example.com"
 
@@ -197,7 +203,7 @@ UA="Your Name your.email@example.com"
 Research-only run. This stops at risk decisions; it does not stage or submit orders:
 
 ```sh
-DB=.sec.db
+DB=.fa.db
 LIB=build/libfolio.so
 [ -f "$LIB" ] || LIB=build/libfolio.dylib
 

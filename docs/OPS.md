@@ -8,6 +8,20 @@ make check
 
 ## 2. Initialize database
 
+Local development:
+
+```sh
+make setup-db
+```
+
+This creates or upgrades `.fa.db`. The direct CLI equivalent is:
+
+```sh
+./sec init
+```
+
+For an explicit production path:
+
 ```sh
 ./sec init --db /var/lib/sec/sec.db
 ```
