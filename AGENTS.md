@@ -12,4 +12,4 @@ Read the repository guidance in `docs/` before making changes:
 - `docs/RISKS.md`
 - `docs/NAMES.md`
 
-For event, control, filing, observation, projection, run, or XBRL payloads, also read the JSON Schemas in `docs/schemas/`.
+For event, control, filing, observation, projection, run, or XBRL payloads, also read the schema contracts in `docs/schemas/`.

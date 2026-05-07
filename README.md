@@ -230,7 +230,7 @@ risk.go                   C++ risk gate command
 cmd.go                    staging, mock submission, modes, status, reports
 util.go, const.go         shared helpers and canonical metric constants
 schema.sql                local operational schema, raw facts, periods, canonical observations
-docs/schemas/              event/control and observation JSON Schemas
+docs/schemas/              line-oriented event/control and observation contracts
 docs/                      intent, requirements, hazards, naming, operations
 tests/                     C++ unit tests
 check                     mechanical repository check

@@ -1,0 +1,9 @@
+# model run contract
+schema	run
+kind	record
+version	1
+
+field	run_id	required	string	-	stable model run id
+field	occurred_at	required	string	UTC-instant	model run time
+field	config	required	object	-	run configuration snapshot
+field	diagnostics	required	string	-	model diagnostics

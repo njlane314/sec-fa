@@ -1,0 +1,18 @@
+# compatibility projection contract
+schema	projection
+kind	record
+version	1
+
+# Compatibility projection of canonical_observations for older model-input
+# consumers. New code should use observation.schema.
+field	security_id	required	integer	-	internal security id
+field	metric_id	required	integer	-	internal metric id
+field	value	required	number	-	projected numeric value
+field	period_start_date	optional	string|null	calendar-date|null	raw period start date when known
+field	period_end_date	required	string	calendar-date	raw period end date
+field	available_at	required	string	UTC-instant	time the projection became available to the system
+field	accession_number	optional	string|null	-	source SEC accession when known
+field	taxonomy	optional	string|null	-	source taxonomy when known
+field	tag	optional	string|null	-	source taxonomy tag when known
+field	unit	optional	string|null	-	source unit when known
+field	quality_flags	optional	integer	-	bitset of quality flags

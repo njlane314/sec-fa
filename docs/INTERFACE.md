@@ -54,7 +54,8 @@ Events are JSON payloads stored in the `events` table. They are append-only evid
 }
 ```
 
-Schema files live in `docs/schemas/`.
+Schema contract files live in `docs/schemas/`. They are plain, line-oriented
+contracts; the format is documented in `docs/schemas/FORMAT`.
 
 ## 3. Command interface
 

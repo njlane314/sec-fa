@@ -1,0 +1,20 @@
+# raw XBRL fact contract
+schema	xbrl
+kind	record
+version	1
+
+field	fact_id	required	string	-	stable raw fact id
+field	source_doc_id	optional	string|null	-	source document id when known
+field	security_id	required	integer	-	internal security id
+field	cik	required	string	-	SEC Central Index Key
+field	accession_number	optional	string|null	-	SEC accession number when known
+field	taxonomy	required	string	-	XBRL taxonomy namespace or family
+field	concept_qname	required	string	-	XBRL concept qualified name
+field	context_id	required	string	-	normalized context id
+field	unit_id	required	string|null	-	normalized unit id when applicable
+field	value_decimal	optional	number|null	-	numeric fact value when parseable
+field	value_text	optional	string|null	-	text fact value when not numeric
+field	raw_fact_hash	required	string	-	hash of the raw fact representation
+field	raw_context_id	optional	string	-	source context id from the filing
+field	form	optional	string|null	-	SEC form type when known
+field	available_at	required	string	UTC-instant	time the fact became available to the system

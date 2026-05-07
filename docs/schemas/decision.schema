@@ -1,0 +1,11 @@
+# risk decision contract
+schema	decision
+kind	record
+version	1
+
+field	decision_id	required	string	-	stable risk decision id
+field	intent_id	required	string	-	order intent being approved or rejected
+field	security_id	required	integer	-	internal security id
+field	approved	required	boolean	-	true only when the risk gate approves the intent
+field	reason	required	string	-	approval or rejection explanation
+field	notional_usd	optional	number	-	order notional reviewed by the risk gate

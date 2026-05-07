@@ -1,0 +1,27 @@
+# canonical accounting observation contract
+schema	observation
+kind	record
+version	1
+
+field	resolver_version	required	string	-	canonical resolver version
+field	security_id	required	integer	-	internal security id
+field	cik	optional	string	-	SEC Central Index Key
+field	metric_id	required	integer	-	internal metric id
+field	metric_name	required	string	-	internal metric name
+field	metric_kind	required	enum[flow,instant,per_share_flow,ratio,derived,unknown]	-	accounting metric kind
+field	basis_id	required	integer	-	measurement basis id
+field	period_id	required	string	-	reporting period id
+field	period_semantics	required	enum[fiscal_quarter,fiscal_ytd,fiscal_year,trailing_twelve_month,instant,stub,transition,irregular,unknown]	-	accounting period semantics
+field	duration_days	required	integer	min=0	inclusive reporting-period duration
+field	fiscal_year	optional	integer|null	-	fiscal year when known
+field	fiscal_period	optional	string|null	-	fiscal period label when known
+field	value_decimal	required	number	-	canonical numeric value
+field	unit_signature	required	string	-	normalized unit signature
+field	dimensions_hash	required	string	-	stable XBRL dimension signature
+field	dimensional_scope	required	string	-	consolidated_total, segment, product, geography, or equivalent scope
+field	observation_status	required	enum[selected,derived,rejected,superseded]	-	resolver disposition
+field	source_fact_id	optional	string|null	-	raw XBRL fact id when selected from one fact
+field	source_accession	optional	string|null	-	source SEC accession when known
+field	quality_flags	optional	integer	min=0	bitset of quality flags
+field	quality_flags_json	optional	array<string>	-	human-readable quality flag names
+field	available_at	required	string	UTC-instant	time the observation became available to the system

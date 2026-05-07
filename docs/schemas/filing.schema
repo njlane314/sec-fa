@@ -1,0 +1,17 @@
+# SEC filing discovery event contract
+schema	filing
+kind	event
+version	1
+
+field	event_type	required	string	const=filing_seen	event envelope type
+field	event_version	required	integer	const=1	event envelope version
+field	event_id	required	string	-	unique event id
+field	occurred_at	required	string	UTC-instant	event creation time
+field	payload	required	object	-	event body
+field	payload.cik	required	string	-	SEC Central Index Key
+field	payload.accession_number	required	string	-	SEC accession number
+field	payload.form	required	string	-	SEC form type
+field	payload.filing_date	required	string	calendar-date	SEC filing date
+field	payload.accepted_at	optional	string|null	UTC-instant|null	SEC acceptance time when known
+field	payload.primary_document	optional	string|null	-	primary filing document when known
+field	payload.source_url	optional	string|null	-	source URL when known

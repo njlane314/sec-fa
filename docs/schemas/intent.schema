@@ -1,0 +1,13 @@
+# order intent contract
+schema	intent
+kind	record
+version	1
+
+field	intent_id	required	string	-	stable order intent id
+field	run_id	required	string	-	model run that produced the intent
+field	security_id	required	integer	-	internal security id
+field	side	required	enum[buy,sell,none]	-	intended trade direction
+field	notional_usd	required	number	-	intended trade notional in USD
+field	current_weight_ratio	optional	number	-	current portfolio weight before intent
+field	target_weight_ratio	required	number	-	target portfolio weight after intent
+field	reason	optional	string	-	model or planner explanation

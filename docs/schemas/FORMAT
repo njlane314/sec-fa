@@ -1,0 +1,18 @@
+# sec-fa schema contract format
+#
+# These files are line-oriented interface contracts. They are intended to be
+# readable with less, diff, grep, cut, awk, and sort.
+#
+# Metadata rows:
+#   schema<TAB>name
+#   kind<TAB>event|record
+#   version<TAB>integer
+#
+# Field rows:
+#   field<TAB>path<TAB>presence<TAB>type<TAB>rules<TAB>notes
+#
+# presence is required or optional. rules is "-" when no additional rule is
+# needed. Dotted paths describe nested payload fields.
+#
+# Example:
+#   awk -F '\t' '$1 == "field" && $3 == "required" { print $2 }' docs/schemas/observation.schema
