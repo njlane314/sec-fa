@@ -167,7 +167,7 @@ Initialize and seed state:
 ```sh
 DB=.fa.db
 
-./sec init --db "$DB" &&
+make setup-db DB="$DB" &&
 ./sec sym --db "$DB" \
   --cik 0000320193 \
   --symbol AAPL \

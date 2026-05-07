@@ -74,7 +74,7 @@ discover -> fetch -> parse -> build -> recon -> plan -> gate -> stage -> send ->
 ```sh
 DB=.fa.db
 
-make setup-db &&
+make setup-db DB="$DB" &&
 ./sec sym --db "$DB" \
   --cik 0000320193 \
   --symbol AAPL \
