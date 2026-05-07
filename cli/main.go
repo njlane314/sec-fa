@@ -45,6 +45,12 @@ func run(args []string) error {
 		return cmdInitDB(rest)
 	case "sym":
 		return cmdSecurityUpsert(rest)
+	case "import-securities":
+		return cmdImportSecurities(rest)
+	case "ingest-universe":
+		return cmdIngestUniverse(rest)
+	case "databento":
+		return cmdDatabento(rest)
 	case "pos":
 		return cmdPositionUpsert(rest)
 	case "watch":
@@ -85,7 +91,7 @@ func run(args []string) error {
 func printHelp() {
 	fmt.Println("usage: sec <command> [options]")
 	fmt.Println()
-	fmt.Println("commands: init sym pos watch pull xbrl univ recon plan value gate stage send mode halt stat report ping")
+	fmt.Println("commands: init sym import-securities ingest-universe databento pos watch pull xbrl univ recon plan value gate stage send mode halt stat report ping")
 }
 
 func newFlagSet(name string) *flag.FlagSet {

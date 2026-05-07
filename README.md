@@ -59,6 +59,9 @@ Implemented:
 - Go XBRL canonical observation resolution is explicit Class B data logic; it is not part of the order-execution authority.
 - SEC `companyfacts` importer retained as a design path; the Go CLI currently uses accession XBRL as the primary ingestion path.
 - CLI commands for securities, positions, model runs, risk checks, order staging, broker reconciliation snapshots, reports, and notifications.
+- Bulk security-master CSV import for issuer-level universes.
+- Batch issuer ingest that discovers, fetches, and parses financial 10-K/10-Q filings only.
+- Databento-backed seed CSV generation for limited explicit stock symbol lists.
 - Auditable model assumptions, statement snapshots, valuations, forecast outcomes, and autonomy controls.
 - CI check script, CMake build, unit test, and schema files.
 - Philosophy, requirements, hazards, coding standard, naming standard, and operations documents.
@@ -115,6 +118,9 @@ The canonical entrypoint is `./sec`. Public commands use single lowercase words 
 ```text
 init
 sym
+import-securities
+ingest-universe
+databento
 pos
 watch
 pull
@@ -207,6 +213,52 @@ UA="Your Name your.email@example.com"
   --user-agent "$UA" &&
 ./sec univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
 ```
+
+Scale to a larger issuer universe:
+
+```sh
+DB=.fa.db
+RAW=raw
+UA="Your Name your.email@example.com"
+
+cat > universe.csv <<'CSV'
+cik,ticker,price_usd,adv_usd,investable
+0000320193,AAPL,200,5000000000,1
+0001045810,NVDA,900,20000000000,1
+0000789019,MSFT,400,7000000000,1
+CSV
+
+./sec import-securities \
+  --db "$DB" \
+  --csv universe.csv &&
+./sec ingest-universe \
+  --db "$DB" \
+  --csv universe.csv \
+  --raw-root "$RAW" \
+  --user-agent "$UA" \
+  --forms 10-K,10-Q,10-K/A,10-Q/A \
+  --annual-limit-per-cik 1 \
+  --quarterly-limit-per-cik 4 \
+  --universe-name us_core \
+  --min-adv-usd 0 \
+  --min-fact-count 2
+```
+
+`ingest-universe` is intentionally issuer-level because the local schema uses CIK as `security_id`. By default it ingests the latest annual 10-K/10-K/A package plus the latest four quarterly 10-Q/10-Q/A packages for each CIK, then parses every fetched accession. This prevents a latest 10-K from crowding out quarterly comparables. If a CSV has several tickers for one CIK, the importer keeps the row with the highest `adv_usd` and records the collapsed count in the event ledger.
+
+Build a security seed CSV from Databento market/reference data:
+
+```sh
+export DATABENTO_API_KEY="..."
+
+./sec databento \
+  --symbols AAPL,MSFT,NVDA \
+  --start 2026-05-01 \
+  --end 2026-05-07 \
+  --out databento_universe.csv
+```
+
+The Databento command calls `security_master.get_last` and `timeseries.get_range` using `EQUS.MINI` / `ohlcv-1d` by default. It writes the same `cik,ticker,price_usd,adv_usd,investable` seed shape accepted by `import-securities` and `ingest-universe`. `adv_usd` is computed as average daily `close * volume` over the requested bar window. The command rejects `ALL_SYMBOLS` by default so accidental broad paid data pulls do not happen.
 
 Research-only run. This stops at risk decisions; it does not stage or submit orders:
 

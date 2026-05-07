@@ -94,6 +94,7 @@ func cmdXBRLParse(args []string) error {
 	packageRoot := fs.String("package-root", "", "")
 	userAgent := fs.String("user-agent", "", "")
 	latest := fs.Bool("latest", false, "")
+	forms := fs.String("forms", "", "")
 	sleepS := fs.Float64("sleep-s", 0, "")
 	strict := fs.Bool("strict", false, "")
 	if err := parseFlags(fs, args); err != nil {
@@ -117,7 +118,7 @@ func cmdXBRLParse(args []string) error {
 		if !*latest {
 			return fail(2, "--accession is required unless --latest is set")
 		}
-		meta, found, err = latestFetchedFilingMetadata(db, *cik)
+		meta, found, err = latestFetchedFilingMetadata(db, *cik, *forms)
 		if err != nil {
 			return err
 		}
@@ -296,13 +297,17 @@ FROM filings WHERE accession_number=?`, accession).Scan(
 	return meta, true, nil
 }
 
-func latestFetchedFilingMetadata(db *sql.DB, cik string) (filingMetadata, bool, error) {
+func latestFetchedFilingMetadata(db *sql.DB, cik, forms string) (filingMetadata, bool, error) {
 	query := `SELECT accession_number, cik, form, filing_date, accepted_at, primary_document
 FROM filings WHERE raw_index_uri IS NOT NULL`
 	var args []any
 	if cik != "" {
 		query += ` AND cik=?`
 		args = append(args, normalizeCIK(cik))
+	}
+	if clause, formArgs := sqlFormFilterClause("form", forms); clause != "" {
+		query += clause
+		args = append(args, formArgs...)
 	}
 	query += ` ORDER BY filing_date DESC, accepted_at DESC LIMIT 1`
 	var meta filingMetadata
@@ -315,6 +320,39 @@ FROM filings WHERE raw_index_uri IS NOT NULL`
 		return filingMetadata{}, false, err
 	}
 	return meta, true, nil
+}
+
+func fetchedFilingMetadataList(db *sql.DB, cik, forms string, limit int) ([]filingMetadata, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	query := `SELECT accession_number, cik, form, filing_date, accepted_at, primary_document
+FROM filings WHERE raw_index_uri IS NOT NULL`
+	var args []any
+	if cik != "" {
+		query += ` AND cik=?`
+		args = append(args, normalizeCIK(cik))
+	}
+	if clause, formArgs := sqlFormFilterClause("form", forms); clause != "" {
+		query += clause
+		args = append(args, formArgs...)
+	}
+	query += ` ORDER BY filing_date DESC, accepted_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []filingMetadata
+	for rows.Next() {
+		var meta filingMetadata
+		if err := rows.Scan(&meta.Accession, &meta.CIK, &meta.Form, &meta.FilingDate, &meta.AcceptedAt, &meta.PrimaryDocument); err != nil {
+			return nil, err
+		}
+		out = append(out, meta)
+	}
+	return out, rows.Err()
 }
 
 type packageFile struct {

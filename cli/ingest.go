@@ -98,6 +98,7 @@ func cmdSecFetch(args []string) error {
 	userAgent := fs.String("user-agent", "", "")
 	accessionFilter := fs.String("accession", "", "")
 	cikFilter := fs.String("cik", "", "")
+	forms := fs.String("forms", "", "")
 	limit := fs.Int("limit", 20, "")
 	sleepS := fs.Float64("sleep-s", 0.15, "")
 	if err := parseFlags(fs, args); err != nil {
@@ -111,7 +112,7 @@ func cmdSecFetch(args []string) error {
 	if err := ensureDB(db); err != nil {
 		return err
 	}
-	query := `SELECT accession_number, cik, primary_document FROM filings WHERE raw_index_uri IS NULL OR (coalesce(primary_document, '') != '' AND raw_primary_uri IS NULL)`
+	query := `SELECT accession_number, cik, primary_document FROM filings WHERE (raw_index_uri IS NULL OR (coalesce(primary_document, '') != '' AND raw_primary_uri IS NULL))`
 	var qargs []any
 	if *accessionFilter != "" {
 		query = `SELECT accession_number, cik, primary_document FROM filings WHERE accession_number=?`
@@ -119,6 +120,10 @@ func cmdSecFetch(args []string) error {
 	} else if *cikFilter != "" {
 		query += ` AND cik=?`
 		qargs = append(qargs, normalizeCIK(*cikFilter))
+	}
+	if clause, formArgs := sqlFormFilterClause("form", *forms); clause != "" {
+		query += clause
+		qargs = append(qargs, formArgs...)
 	}
 	query += ` ORDER BY filing_date DESC LIMIT ?`
 	qargs = append(qargs, *limit)
@@ -227,6 +232,30 @@ func formAllowed(forms map[string]bool, form string) bool {
 		return true
 	}
 	return forms[strings.ToUpper(strings.TrimSpace(form))]
+}
+
+func sqlFormFilterClause(column, forms string) (string, []any) {
+	allowedForms := parseFormSet(forms)
+	if len(allowedForms) == 0 || allowedForms["*"] {
+		return "", nil
+	}
+	values := make([]string, 0, len(allowedForms))
+	for form := range allowedForms {
+		if form != "*" {
+			values = append(values, form)
+		}
+	}
+	sort.Strings(values)
+	if len(values) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(values))
+	args := make([]any, 0, len(values))
+	for i, form := range values {
+		placeholders[i] = "?"
+		args = append(args, form)
+	}
+	return " AND upper(" + column + ") IN (" + strings.Join(placeholders, ",") + ")", args
 }
 
 func effectiveUserAgent(userAgent string) string {

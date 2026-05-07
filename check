@@ -228,6 +228,16 @@ run_quiet sym --db "$DB" --cik 0000000001 --symbol AAA --price-usd 10 --adv-usd 
 run_quiet sym --db "$DB" --cik 0000000002 --symbol BBB --price-usd 100 --adv-usd 10000000 --investable 1
 run_quiet pos --db "$DB" --cik 0000000001 --quantity-shares 0 --market-value-usd 0 --weight-ratio 0
 
+cat > "$TMPDIR/universe.csv" <<'CSV'
+cik,ticker,price_usd,adv_usd,investable
+0000000004,DDD,50,25000000,0
+0000000004,DDD.B,50,50000000,0
+CSV
+run_quiet import-securities --db "$DB" --csv "$TMPDIR/universe.csv"
+eq "select symbol from securities where security_id=4" DDD.B
+eq "select investable from securities where security_id=4" 0
+eq "select count(*) from events where event_type='security_master_imported' and json_extract(payload_json, '$.duplicate_cik_rows_collapsed')=1" 1
+
 sqlite3 "$DB" "insert into filings(accession_number, cik, form, filing_date, accepted_at, primary_document, source_url, ingested_at) values ('0000000003-24-000001', '0000000003', '10-Q', '2024-04-30', '2024-04-30T12:00:00Z', 'sample-20240331.htm', 'fixture://sec-package/index.json', '2024-04-30T12:00:00Z')"
 run_quiet xbrl --db "$DB" --accession 0000000003-24-000001 \
   --raw-root "$TMPDIR/raw" --package-root tests/fixtures/sec-package --strict --sleep-s 0
