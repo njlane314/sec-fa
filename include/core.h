@@ -1,5 +1,5 @@
-#ifndef FA_CORE_H
-#define FA_CORE_H
+#ifndef CORE_H
+#define CORE_H
 
 #include <stddef.h>
 #include <stdint.h>

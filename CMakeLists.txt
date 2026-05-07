@@ -6,7 +6,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_library(folio SHARED core/fa_core.cpp)
+add_library(folio SHARED
+    core/core.cpp
+    core/growth.cpp
+    core/value.cpp
+    core/gate.cpp
+)
 target_include_directories(folio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(folio PRIVATE
     -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror

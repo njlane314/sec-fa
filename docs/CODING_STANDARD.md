@@ -7,8 +7,8 @@ This standard applies to production code in this repository. Class A code receiv
 Class A currently includes:
 
 ```text
-include/fa_core.h
-core/fa_core.cpp
+include/core.h
+core/*.cpp
 broker submission code when implemented
 reconciliation code when connected to a live broker
 ledger mutation code for order/risk state
