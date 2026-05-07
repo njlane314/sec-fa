@@ -1,56 +1,207 @@
 #!/usr/bin/env sh
 set -eu
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo >/dev/null
-cmake --build build --parallel >/dev/null
-ctest --test-dir build --output-on-failure
-go build -o build/sec ./cli
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$ROOT"
+export SEC_FA_ROOT="$ROOT"
+
+BUILD_DIR=${BUILD_DIR:-build}
+CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE:-RelWithDebInfo}
+
+fail() {
+  printf 'check failed: %s\n' "$*" >&2
+  exit 1
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+step() {
+  printf '==> %s\n' "$*" >&2
+}
+
+need cmake
+need ctest
+need go
+need gofmt
+need grep
+need sqlite3
+
+if [ "$(sqlite3 :memory: "select json_valid('{}');")" != "1" ]; then
+  fail "sqlite3 was built without JSON1 support"
+fi
+
+step "checking Go formatting"
+gofmt_files=$(gofmt -l cli/*.go)
+if [ -n "$gofmt_files" ]; then
+  printf '%s\n' "$gofmt_files" >&2
+  fail "Go files need gofmt"
+fi
+
+step "checking C++ core boundaries"
+if grep -R -n -E '#[[:space:]]*include[[:space:]]*<([^>]*fstream|filesystem|thread|chrono|ctime|unistd.h|fcntl.h|sys/socket.h|curl|boost/asio)' engine abi >&2; then
+  fail "engine or ABI includes forbidden IO/time/network headers"
+fi
+if grep -R -n -E '\b(std::filesystem|std::ifstream|std::ofstream|std::fstream|fopen|freopen|open\(|close\(|read\(|write\(|socket\(|connect\(|accept\(|send\(|recv\(|getenv|system|popen|time\(|clock_gettime|std::chrono|std::time)\b' engine >&2; then
+  fail "engine contains forbidden IO/time/network calls"
+fi
+if grep -n -E '\bstd::|<[[:space:]]*(vector|string|array|span|map|unordered_map|optional|variant)[[:space:]]*>' abi/core.h >&2; then
+  fail "public ABI must not expose STL types"
+fi
+
+step "configuring C++ build"
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" >&2
+
+step "building C++ core and tests"
+cmake --build "$BUILD_DIR" --parallel >&2
+
+step "running C++ tests"
+ctest --test-dir "$BUILD_DIR" --output-on-failure >&2
+
+step "running Go tests and vet"
+go test ./... >&2
+go vet ./... >&2
+
+step "building Go CLI"
+go build -o "$BUILD_DIR/sec" ./cli >&2
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 DB="$TMPDIR/sec.db"
-LIB="build/libfolio.so"
-[ -f "$LIB" ] || LIB="build/libfolio.dylib"
+LIB="$BUILD_DIR/libfolio.so"
+[ -f "$LIB" ] || LIB="$BUILD_DIR/libfolio.dylib"
+[ -f "$LIB" ] || fail "built core library not found in $BUILD_DIR"
 
-run() {
-  build/sec "$@"
+run_quiet() {
+  "$BUILD_DIR/sec" "$@" >/dev/null
+}
+
+expect_exit() {
+  expected=$1
+  shift
+  set +e
+  "$@" >"$TMPDIR/expect.out" 2>"$TMPDIR/expect.err"
+  actual=$?
+  set -e
+  if [ "$actual" -ne "$expected" ]; then
+    printf 'expected exit %s, got %s for:' "$expected" "$actual" >&2
+    printf ' %s' "$@" >&2
+    printf '\nstdout:\n' >&2
+    sed -n '1,120p' "$TMPDIR/expect.out" >&2
+    printf 'stderr:\n' >&2
+    sed -n '1,120p' "$TMPDIR/expect.err" >&2
+    exit 1
+  fi
+}
+
+sql() {
+  sqlite3 "$DB" "$1"
 }
 
 eq() {
-  actual=$(sqlite3 "$DB" "$1")
+  actual=$(sql "$1")
   expected=$2
-  test "$actual" = "$expected" || {
+  if [ "$actual" != "$expected" ]; then
     printf 'assertion failed: %s expected=%s actual=%s\n' "$1" "$expected" "$actual" >&2
     exit 1
-  }
+  fi
 }
 
-run init --db "$DB"
-run sym --db "$DB" --cik 0000000001 --symbol AAA --price-usd 10 --adv-usd 10000000 --investable 1
-run sym --db "$DB" --cik 0000000002 --symbol BBB --price-usd 100 --adv-usd 10000000 --investable 1
-run pos --db "$DB" --cik 0000000001 --quantity-shares 0 --market-value-usd 0 --weight-ratio 0
+ge() {
+  actual=$(sql "$1")
+  minimum=$2
+  if [ "$actual" -lt "$minimum" ]; then
+    printf 'assertion failed: %s expected>=%s actual=%s\n' "$1" "$minimum" "$actual" >&2
+    exit 1
+  fi
+}
 
-run xbrl --db "$DB" --accession 0000000003-24-000001 --cik 0000000003 \
+no_rows() {
+  actual=$(sql "$1")
+  if [ -n "$actual" ]; then
+    printf 'assertion failed: %s returned rows:\n%s\n' "$1" "$actual" >&2
+    exit 1
+  fi
+}
+
+check_db() {
+  eq 'pragma integrity_check' ok
+  no_rows 'pragma foreign_key_check'
+  eq "select count(*) from events where event_version != 1 or event_id='' or occurred_at='' or payload_json='' or payload_sha256=''" 0
+  eq "select count(*) from events where json_valid(payload_json) != 1" 0
+  eq "select count(*) from events where length(payload_sha256) != 64" 0
+}
+
+step "running CLI smoke path"
+run_quiet init --db "$DB"
+eq "select value from settings where key='trading_mode'" observe
+eq 'select enabled from autonomy_controls where id=1' 0
+
+run_quiet sym --db "$DB" --cik 0000000001 --symbol AAA --price-usd 10 --adv-usd 10000000 --investable 1
+run_quiet sym --db "$DB" --cik 0000000002 --symbol BBB --price-usd 100 --adv-usd 10000000 --investable 1
+run_quiet pos --db "$DB" --cik 0000000001 --quantity-shares 0 --market-value-usd 0 --weight-ratio 0
+
+run_quiet xbrl --db "$DB" --accession 0000000003-24-000001 --cik 0000000003 \
   --form 10-Q --filed-at 2024-04-30 --accepted-at 2024-04-30T12:00:00Z \
   --raw-root "$TMPDIR/raw" --package-root tests/fixtures/sec-package --strict --sleep-s 0
 
-test "$(sqlite3 "$DB" 'select count(*) from source_documents')" -ge 3
-test "$(sqlite3 "$DB" 'select count(*) from xbrl_contexts')" -ge 4
-test "$(sqlite3 "$DB" 'select count(*) from xbrl_units')" -ge 1
-test "$(sqlite3 "$DB" 'select count(*) from dimension_signatures')" -ge 2
+ge 'select count(*) from source_documents' 3
+ge 'select count(*) from xbrl_contexts' 4
+ge 'select count(*) from xbrl_units' 1
+ge 'select count(*) from dimension_signatures' 2
+eq "select count(*) from filings where accession_number='0000000003-24-000001' and cik='0000000003' and form='10-Q' and filing_date='2024-04-30' and accepted_at='2024-04-30T12:00:00Z'" 1
 eq "select count(*) from xbrl_facts where accession_number='0000000003-24-000001'" 7
+eq "select count(*) from xbrl_facts where fact_id='' or security_id is null or cik='' or taxonomy='' or concept_qname='' or context_id='' or raw_fact_hash='' or available_at=''" 0
 eq "select count(*) from canonical_observations where security_id=3" 3
 eq "select count(*) from canonical_observations where security_id=3 and dimensional_scope!='consolidated_total'" 0
+eq "select count(*) from canonical_observations where resolver_version='' or metric_name='' or metric_kind='' or basis_id is null or period_id='' or unit_signature='' or dimensions_hash='' or dimensional_scope='' or observation_status not in ('selected','derived','rejected','superseded') or available_at=''" 0
+eq "select count(*) from events where event_type='xbrl_package_parsed' and json_extract(payload_json, '$.raw_facts_inserted')=7 and json_extract(payload_json, '$.canonical_selected_inserted')=3" 1
 
-run ci-seed --db "$DB"
-run recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
-run plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
-run value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
-run gate --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --max-order-notional-usd 20000
-approved=$(sqlite3 "$DB" 'select count(*) from risk_decisions where approved=1')
-test "$approved" -ge 1
-sqlite3 "$DB" "update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1; delete from risk_decisions;"
-run gate --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --max-order-notional-usd 20000
-eq 'select count(*) from risk_decisions where approved=1' 0
+run_quiet ci-seed --db "$DB"
+run_quiet recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
+run_quiet plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
+run_quiet value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
+run_quiet gate --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --max-order-notional-usd 20000
+approved=$(sql 'select count(*) from risk_decisions where approved=1')
+if [ "$approved" -lt 1 ]; then
+  fail "expected at least one approved risk decision"
+fi
 
-echo "check ok"
+eq "select count(*) from model_runs where run_id=''" 0
+eq "select count(*) from order_intents where intent_id='' or run_id='' or side not in ('buy','sell','none') or notional_usd is null or target_weight_ratio is null" 0
+eq "select count(*) from risk_decisions where decision_id='' or intent_id='' or reason=''" 0
+eq "select count(*) from risk_decisions where intent_id not in (select intent_id from order_intents)" 0
+eq "select count(*) from events where event_type='gate_completed' and json_extract(payload_json, '$.approved_count') >= 1" 1
+
+expect_exit 3 run_quiet stage --db "$DB"
+eq 'select count(*) from staged_orders' 0
+
+run_quiet mode --db "$DB" stage
+run_quiet stage --db "$DB"
+staged=$(sql 'select count(*) from staged_orders')
+if [ "$staged" -ne "$approved" ]; then
+  fail "staged_orders count $staged does not match approved decisions $approved"
+fi
+eq "select count(*) from events where event_type='order_staged'" "$staged"
+
+expect_exit 3 run_quiet send --db "$DB" --adapter mock
+eq 'select count(*) from broker_events' 0
+
+run_quiet mode --db "$DB" paper
+run_quiet send --db "$DB" --adapter mock
+eq 'select count(*) from broker_events' "$staged"
+eq "select count(*) from events where event_type='broker_order_submitted_mock'" "$staged"
+
+approved_before_stale=$(sql 'select count(*) from risk_decisions where approved=1')
+sqlite3 "$DB" "update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1;"
+run_quiet plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
+run_quiet gate --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --max-order-notional-usd 20000
+eq 'select count(*) from risk_decisions where approved=1' "$approved_before_stale"
+ge "select count(*) from risk_decisions where approved=0 and reason='broker reconciliation is missing or stale'" 1
+ge "select count(*) from events where event_type='gate_completed' and json_extract(payload_json, '$.approved_count')=0 and json_extract(payload_json, '$.rejected_count') >= 1" 1
+
+run_quiet stat --db "$DB"
+check_db
+
+printf 'check ok\n'
