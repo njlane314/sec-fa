@@ -1,0 +1,15 @@
+workflow broker_shadow_fixture
+driver test.v1
+mode shadow
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+
+layer job key workflow_name
+
+node send
+  alg cmd.send.mock.v1
+  cell job workflow_name=broker_shadow_fixture
+  set max_reconciliation_age_s 3600
+  output broker_events broker_event_set.v1
+end

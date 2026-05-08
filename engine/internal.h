@@ -18,7 +18,7 @@ constexpr double kTiny = 1.0e-12;
 constexpr size_t kMaxSecurities = 20000u;
 constexpr size_t kMaxFacts = 5000000u;
 constexpr size_t kMaxIntents = 20000u;
-constexpr size_t kMaxStatements = 200000u;
+constexpr size_t kMaxStatements = 240000u;
 
 struct MetricPair {
     bool has_latest;

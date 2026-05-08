@@ -1,0 +1,44 @@
+workflow check_fixture_setup
+driver check_fixture.v1
+mode observe
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+
+layer job key workflow_name step
+
+resource sqlite.local sqlite max_concurrent 1 min_interval_ms 0 allowed_modes observe,shadow,stage,paper,live_limited,live,halted hazard_class B
+resource filesystem.local filesystem max_concurrent 1 min_interval_ms 0 allowed_modes observe,shadow,stage,paper,live_limited,live,halted hazard_class B
+
+node seed_portfolio
+  alg fixture.seed_portfolio.v1
+  cell job workflow_name=check_fixture_setup step=portfolio
+  output output command_output.v1
+end
+
+node ingest_xbrl
+  alg fixture.ingest_sec_package.v1
+  cell job workflow_name=check_fixture_setup step=xbrl
+  input output from seed_portfolio.output
+  set accession 0000000003-24-000001
+  set cik "0000000003"
+  set form 10-Q
+  set filing_date 2024-04-30
+  set accepted_at 2024-04-30T12:00:00Z
+  set primary_document sample-20240331.htm
+  set source_url fixture://sec-package/index.json
+  set package_root tests/fixtures/sec-package
+  output raw_package raw_filing_package.v1
+  output xbrl_facts xbrl_fact_set.v1
+  output canonical_observations canonical_observation_set.v1
+  output output command_output.v1
+end
+
+node seed_model_observations
+  alg fixture.seed_model_observations.v1
+  cell job workflow_name=check_fixture_setup step=model_observations
+  input canonical_observations from ingest_xbrl.canonical_observations
+  set sql_path tests/fixtures/check-model-observations.sql
+  output canonical_observations canonical_observation_set.v1
+  output output command_output.v1
+end

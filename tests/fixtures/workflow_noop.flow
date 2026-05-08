@@ -1,0 +1,15 @@
+workflow noop_fixture
+driver test.v1
+mode observe
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+
+layer job key workflow_name
+
+node noop
+  alg noop.test.v1
+  cell job workflow_name=noop_fixture
+  set message test
+  output output command_output.v1
+end

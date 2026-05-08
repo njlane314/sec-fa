@@ -1,0 +1,76 @@
+workflow paper_mock_submit
+driver guarded_mock_submit.v1
+mode paper
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write true
+allow_broker_resource true
+
+layer job key workflow_name decision_as_of
+layer portfolio parent job key portfolio_id
+layer decision_run parent portfolio key workflow_run_id
+
+resource sqlite.local sqlite max_concurrent 1 min_interval_ms 0 allowed_modes observe,shadow,stage,paper,live_limited,live,halted hazard_class B
+resource broker.adapter broker max_concurrent 1 min_interval_ms 0 allowed_modes paper,live_limited,live hazard_class A
+
+node reconcile
+  alg cmd.recon.v1
+  cell portfolio portfolio_id=default
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set reconciled true
+  output reconciliation reconciliation_snapshot.v1
+end
+
+node plan
+  alg cmd.plan.v1
+  cell decision_run portfolio_id=default model=baseline
+  input reconciliation from reconcile.reconciliation
+  set core_lib build/libfolio.dylib
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set target_gross_exposure_ratio 0.50
+  set max_name_weight_ratio 0.05
+  set min_expected_return_proxy 0.05
+  set min_abs_order_notional_usd 100
+  set max_forecast_abs_growth_ratio 2.0
+  set max_fact_age_days 540
+  set max_order_notional_usd 10000
+  set min_adv_usd 1000000
+  set max_adv_participation_ratio 0.01
+  set max_reconciliation_age_s 3600
+  output forecasts forecast_set.v1
+  output target_weights target_weight_set.v1
+  output order_intents order_intent_set.v1
+end
+
+node gate
+  alg cmd.gate.v1
+  cell decision_run portfolio_id=default model=baseline
+  input order_intents from plan.order_intents
+  input reconciliation from reconcile.reconciliation
+  set core_lib build/libfolio.dylib
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set max_name_weight_ratio 0.05
+  set max_order_notional_usd 10000
+  set min_adv_usd 1000000
+  set max_adv_participation_ratio 0.01
+  set max_reconciliation_age_s 3600
+  output risk_decisions risk_decision_set.v1
+end
+
+node stage
+  alg cmd.stage.v1
+  cell decision_run portfolio_id=default model=baseline
+  input risk_decisions from gate.risk_decisions
+  output staged_orders staged_order_set.v1
+end
+
+node send
+  alg cmd.send.mock.v1
+  cell decision_run portfolio_id=default adapter=mock
+  input staged_orders from stage.staged_orders
+  input reconciliation from reconcile.reconciliation
+  set max_reconciliation_age_s 3600
+  output broker_events broker_event_set.v1
+end

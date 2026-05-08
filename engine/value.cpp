@@ -164,6 +164,12 @@ double confidence_from_statement_quality(uint32_t quality_flags, bool has_previo
     if ((quality_flags & FA_STMT_MISSING_DEBT) != 0u) {
         confidence *= 0.85;
     }
+    if ((quality_flags & FA_STMT_MISSING_OPERATING_CASH_FLOW) != 0u) {
+        confidence *= 0.55;
+    }
+    if ((quality_flags & FA_STMT_MISSING_CAPEX) != 0u) {
+        confidence *= 0.70;
+    }
     if ((quality_flags & FA_STMT_NEGATIVE_FCF) != 0u) {
         confidence *= 0.75;
     }

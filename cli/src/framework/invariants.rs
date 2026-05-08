@@ -74,14 +74,20 @@ pub fn validate_algorithm_mode(
         violations.push(InvariantViolation::error(
             "NO_EXTERNAL_WRITE_IN_OBSERVE_OR_SHADOW",
             json!({"algorithm_id": algorithm.algorithm_id, "mode": mode}),
-            format!("algorithm {} has external_write purity in mode={mode}", algorithm.algorithm_id),
+            format!(
+                "algorithm {} has external_write purity in mode={mode}",
+                algorithm.algorithm_id
+            ),
         ));
     }
     if algorithm.algorithm_id == "cmd.stage.v1" && !can_stage(mode) {
         violations.push(InvariantViolation::error(
             "STAGE_MODE",
             json!({"algorithm_id": algorithm.algorithm_id, "mode": mode}),
-            format!("algorithm {} cannot stage orders in mode={mode}", algorithm.algorithm_id),
+            format!(
+                "algorithm {} cannot stage orders in mode={mode}",
+                algorithm.algorithm_id
+            ),
         ));
     }
     for resource_id in &algorithm.resources {
@@ -89,7 +95,10 @@ pub fn validate_algorithm_mode(
             violations.push(InvariantViolation::error(
                 "UNKNOWN_RESOURCE",
                 json!({"algorithm_id": algorithm.algorithm_id, "resource_id": resource_id}),
-                format!("algorithm {} uses unknown resource {resource_id}", algorithm.algorithm_id),
+                format!(
+                    "algorithm {} uses unknown resource {resource_id}",
+                    algorithm.algorithm_id
+                ),
             ));
             continue;
         };
@@ -122,7 +131,10 @@ pub fn validate_class_c_outputs(
                 violations.push(InvariantViolation::error(
                     "CLASS_C_CANNOT_CREATE_AUTHORITY",
                     json!({"algorithm_id": algorithm.algorithm_id, "product_type": product_type}),
-                    format!("Class C algorithm {} cannot create authority product {product_type}", algorithm.algorithm_id),
+                    format!(
+                        "Class C algorithm {} cannot create authority product {product_type}",
+                        algorithm.algorithm_id
+                    ),
                 ));
             }
         }
@@ -139,7 +151,10 @@ pub fn validate_class_a_input_product(
         Some(InvariantViolation::error(
             "NO_CLASS_A_FROM_CLASS_C",
             json!({"algorithm_id": algorithm.algorithm_id, "product_type": product_type}),
-            format!("Class A algorithm {} cannot consume Class C product {product_type}", algorithm.algorithm_id),
+            format!(
+                "Class A algorithm {} cannot consume Class C product {product_type}",
+                algorithm.algorithm_id
+            ),
         ))
     } else {
         None
@@ -182,7 +197,13 @@ pub fn validate_runtime_input_product(
     let product = conn.query_row(
         "SELECT product_type, hazard_class, available_at FROM data_products WHERE product_id=?",
         [product_id],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        },
     )?;
     if let Some(v) = validate_product_available_for_decision(product_id, &product.2, decision_as_of)
     {
@@ -194,7 +215,10 @@ pub fn validate_runtime_input_product(
     Ok(violations)
 }
 
-pub fn hazard_class_for_product_type(conn: &Connection, product_type: &str) -> Result<Option<String>> {
+pub fn hazard_class_for_product_type(
+    conn: &Connection,
+    product_type: &str,
+) -> Result<Option<String>> {
     Ok(load_product_type(conn, product_type)?.map(|p| p.hazard_class))
 }
 

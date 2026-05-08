@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context as _, Result};
+use anyhow::{bail, Context as _, Result};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -111,21 +111,413 @@ pub struct ValidationReport {
 }
 
 pub fn load_workflow_spec(path: &Path) -> Result<ParsedWorkflow> {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("flow") {
+        bail!("workflow specs must use the .flow format");
+    }
     let text = fs::read_to_string(path)
         .with_context(|| format!("reading workflow spec {}", path.display()))?;
     parse_workflow_spec(&text)
 }
 
 pub fn parse_workflow_spec(text: &str) -> Result<ParsedWorkflow> {
+    let spec = parse_flow_workflow(text)?;
+    parsed_from_spec(spec)
+}
+
+pub fn parse_workflow_ir_json(text: &str) -> Result<ParsedWorkflow> {
     let value: Value = serde_json::from_str(text)?;
-    let canonical_json = to_canonical_json(&value)?;
     let spec: WorkflowSpec = serde_json::from_value(value)?;
+    parsed_from_spec(spec)
+}
+
+fn parsed_from_spec(spec: WorkflowSpec) -> Result<ParsedWorkflow> {
+    let canonical_json = to_canonical_json(&spec)?;
     let spec_sha256 = hash::sha256_hex(canonical_json.as_bytes());
     Ok(ParsedWorkflow {
         spec,
         canonical_json,
         spec_sha256,
     })
+}
+
+#[derive(Debug)]
+struct NodeBuilder {
+    node_id: String,
+    algorithm: Option<String>,
+    cell: Option<CellSpec>,
+    config: serde_json::Map<String, Value>,
+    inputs: Vec<NodeInputSpec>,
+    outputs: Vec<NodeOutputSpec>,
+}
+
+fn parse_flow_workflow(text: &str) -> Result<WorkflowSpec> {
+    let mut workflow_name = None::<String>;
+    let mut driver_id = None::<String>;
+    let mut mode = None::<String>;
+    let mut decision_as_of = None::<String>;
+    let mut allow_external_write = false;
+    let mut allow_broker_resource = false;
+    let mut layers = Vec::<LayerSpec>::new();
+    let mut resources = Vec::<ResourceSpec>::new();
+    let mut nodes = Vec::<NodeSpec>::new();
+    let mut current_node = None::<NodeBuilder>;
+
+    for (index, raw_line) in text.lines().enumerate() {
+        let line_no = index + 1;
+        let Some(line) = strip_comment(raw_line)? else {
+            continue;
+        };
+        let tokens = split_words(&line).with_context(|| format!("line {line_no}"))?;
+        if tokens.is_empty() {
+            continue;
+        }
+
+        if let Some(node) = current_node.as_mut() {
+            match tokens[0].as_str() {
+                "alg" | "algorithm" => {
+                    require_len(&tokens, 2, line_no)?;
+                    node.algorithm = Some(tokens[1].clone());
+                }
+                "cell" => {
+                    if tokens.len() < 2 {
+                        bail!("line {line_no}: cell requires a layer");
+                    }
+                    let mut key = serde_json::Map::<String, Value>::new();
+                    for token in &tokens[2..] {
+                        let (field, value) = parse_key_value(token, line_no)?;
+                        key.insert(field.to_string(), parse_flow_value(value)?);
+                    }
+                    node.cell = Some(CellSpec {
+                        layer: tokens[1].clone(),
+                        key: Value::Object(key),
+                    });
+                }
+                "input" => {
+                    if tokens.len() != 4 || tokens[2] != "from" {
+                        bail!("line {line_no}: input syntax is `input <role> from <node>.<role>`");
+                    }
+                    let (from_node, from_role) = parse_node_role(&tokens[3], line_no)?;
+                    if from_role != tokens[1] {
+                        bail!("line {line_no}: input role must match source role");
+                    }
+                    node.inputs.push(NodeInputSpec {
+                        from: from_node.to_string(),
+                        role: from_role.to_string(),
+                    });
+                }
+                "set" => {
+                    if tokens.len() != 3 {
+                        bail!("line {line_no}: set syntax is `set <key> <value>`");
+                    }
+                    node.config
+                        .insert(tokens[1].clone(), parse_flow_value(&tokens[2])?);
+                }
+                "output" => {
+                    if tokens.len() != 3 {
+                        bail!("line {line_no}: output syntax is `output <role> <product_type>`");
+                    }
+                    node.outputs.push(NodeOutputSpec {
+                        role: tokens[1].clone(),
+                        product_type: tokens[2].clone(),
+                    });
+                }
+                "end" => {
+                    if tokens.len() != 1 {
+                        bail!("line {line_no}: end takes no arguments");
+                    }
+                    let node = current_node.take().expect("node exists");
+                    nodes.push(NodeSpec {
+                        node_id: node.node_id,
+                        algorithm: node.algorithm.context("node is missing an alg line")?,
+                        cell: node.cell.context("node is missing a cell line")?,
+                        config: Value::Object(node.config),
+                        inputs: node.inputs,
+                        outputs: node.outputs,
+                    });
+                }
+                _ => bail!("line {line_no}: unknown node directive `{}`", tokens[0]),
+            }
+            continue;
+        }
+
+        match tokens[0].as_str() {
+            "workflow" => {
+                require_len(&tokens, 2, line_no)?;
+                workflow_name = Some(tokens[1].clone());
+            }
+            "driver" => {
+                require_len(&tokens, 2, line_no)?;
+                driver_id = Some(tokens[1].clone());
+            }
+            "mode" => {
+                require_len(&tokens, 2, line_no)?;
+                mode = Some(tokens[1].clone());
+            }
+            "decision_as_of" => {
+                require_len(&tokens, 2, line_no)?;
+                decision_as_of = Some(tokens[1].clone());
+            }
+            "allow_external_write" => {
+                require_len(&tokens, 2, line_no)?;
+                allow_external_write = parse_bool(&tokens[1], line_no)?;
+            }
+            "allow_broker_resource" => {
+                require_len(&tokens, 2, line_no)?;
+                allow_broker_resource = parse_bool(&tokens[1], line_no)?;
+            }
+            "layer" => layers.push(parse_layer(&tokens, line_no)?),
+            "resource" => resources.push(parse_resource(&tokens, line_no)?),
+            "node" => {
+                require_len(&tokens, 2, line_no)?;
+                current_node = Some(NodeBuilder {
+                    node_id: tokens[1].clone(),
+                    algorithm: None,
+                    cell: None,
+                    config: serde_json::Map::new(),
+                    inputs: Vec::new(),
+                    outputs: Vec::new(),
+                });
+            }
+            _ => bail!("line {line_no}: unknown workflow directive `{}`", tokens[0]),
+        }
+    }
+
+    if current_node.is_some() {
+        bail!("workflow ended before current node was closed with `end`");
+    }
+
+    Ok(WorkflowSpec {
+        spec_version: 1,
+        workflow_name: workflow_name.context("workflow line is required")?,
+        driver: DriverSpec {
+            driver_id: driver_id.context("driver line is required")?,
+            mode: mode.context("mode line is required")?,
+            decision_as_of: decision_as_of.context("decision_as_of line is required")?,
+            allow_external_write,
+            allow_broker_resource,
+        },
+        layers,
+        resources,
+        nodes,
+    })
+}
+
+fn strip_comment(raw: &str) -> Result<Option<String>> {
+    let mut out = String::new();
+    let mut quote = None::<char>;
+    let mut escaped = false;
+    for ch in raw.chars() {
+        if escaped {
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && quote.is_some() {
+            out.push(ch);
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            out.push(ch);
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            out.push(ch);
+            continue;
+        }
+        if ch == '#' {
+            break;
+        }
+        out.push(ch);
+    }
+    if quote.is_some() {
+        bail!("unterminated quoted string");
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_string()))
+    }
+}
+
+fn split_words(line: &str) -> Result<Vec<String>> {
+    let mut words = Vec::<String>::new();
+    let mut current = String::new();
+    let mut quote = None::<char>;
+    let mut escaped = false;
+    for ch in line.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && quote.is_some() {
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(ch);
+    }
+    if quote.is_some() {
+        bail!("unterminated quoted string");
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    Ok(words)
+}
+
+fn require_len(tokens: &[String], len: usize, line_no: usize) -> Result<()> {
+    if tokens.len() != len {
+        bail!(
+            "line {line_no}: `{}` expects {} argument(s)",
+            tokens[0],
+            len.saturating_sub(1)
+        );
+    }
+    Ok(())
+}
+
+fn parse_layer(tokens: &[String], line_no: usize) -> Result<LayerSpec> {
+    if tokens.len() < 4 {
+        bail!("line {line_no}: layer syntax is `layer <name> [parent <name>] key <fields...>`");
+    }
+    let layer = tokens[1].clone();
+    let mut parent = None::<String>;
+    let mut index = 2usize;
+    if tokens.get(index).map(String::as_str) == Some("parent") {
+        let value = tokens
+            .get(index + 1)
+            .context("layer parent requires a value")?;
+        parent = Some(value.clone());
+        index += 2;
+    }
+    if tokens.get(index).map(String::as_str) != Some("key") {
+        bail!("line {line_no}: layer requires a key field list");
+    }
+    let key_fields = tokens[index + 1..].to_vec();
+    if key_fields.is_empty() {
+        bail!("line {line_no}: layer key list must not be empty");
+    }
+    Ok(LayerSpec {
+        layer,
+        parent,
+        key_fields,
+    })
+}
+
+fn parse_resource(tokens: &[String], line_no: usize) -> Result<ResourceSpec> {
+    if tokens.len() < 3 {
+        bail!("line {line_no}: resource syntax is `resource <id> <kind> ...`");
+    }
+    let mut resource = ResourceSpec {
+        resource_id: tokens[1].clone(),
+        resource_kind: tokens[2].clone(),
+        max_concurrent: 1,
+        min_interval_ms: 0,
+        allowed_modes: Vec::new(),
+        hazard_class: "C".to_string(),
+    };
+    let mut index = 3usize;
+    while index < tokens.len() {
+        match tokens[index].as_str() {
+            "max_concurrent" => {
+                resource.max_concurrent = parse_i64(tokens.get(index + 1), line_no)?;
+                index += 2;
+            }
+            "min_interval_ms" => {
+                resource.min_interval_ms = parse_i64(tokens.get(index + 1), line_no)?;
+                index += 2;
+            }
+            "allowed_modes" => {
+                let value = tokens
+                    .get(index + 1)
+                    .context("allowed_modes requires a value")?;
+                resource.allowed_modes = value
+                    .split(',')
+                    .filter(|mode| !mode.trim().is_empty())
+                    .map(|mode| mode.trim().to_string())
+                    .collect();
+                index += 2;
+            }
+            "hazard_class" => {
+                let value = tokens
+                    .get(index + 1)
+                    .context("hazard_class requires a value")?;
+                resource.hazard_class = value.clone();
+                index += 2;
+            }
+            _ => bail!("line {line_no}: unknown resource field `{}`", tokens[index]),
+        }
+    }
+    Ok(resource)
+}
+
+fn parse_key_value(token: &str, line_no: usize) -> Result<(&str, &str)> {
+    token
+        .split_once('=')
+        .filter(|(key, _)| !key.is_empty())
+        .with_context(|| format!("line {line_no}: expected key=value, got `{token}`"))
+}
+
+fn parse_node_role(value: &str, line_no: usize) -> Result<(&str, &str)> {
+    value
+        .split_once('.')
+        .filter(|(node, role)| !node.is_empty() && !role.is_empty())
+        .with_context(|| format!("line {line_no}: expected <node>.<role>, got `{value}`"))
+}
+
+fn parse_bool(value: &str, line_no: usize) -> Result<bool> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => bail!("line {line_no}: expected true or false, got `{value}`"),
+    }
+}
+
+fn parse_i64(value: Option<&String>, line_no: usize) -> Result<i64> {
+    value
+        .context("integer value is required")?
+        .parse::<i64>()
+        .with_context(|| format!("line {line_no}: invalid integer"))
+}
+
+fn parse_flow_value(value: &str) -> Result<Value> {
+    if value == "true" {
+        return Ok(Value::Bool(true));
+    }
+    if value == "false" {
+        return Ok(Value::Bool(false));
+    }
+    if let Ok(v) = value.parse::<i64>() {
+        return Ok(json!(v));
+    }
+    if let Ok(v) = value.parse::<f64>() {
+        return Ok(json!(v));
+    }
+    Ok(Value::String(value.to_string()))
 }
 
 pub fn validate_workflow(
@@ -171,13 +563,7 @@ pub fn validate_workflow(
         }
     };
 
-    validate_nodes(
-        conn,
-        spec,
-        &layers,
-        &output_index,
-        &mut violations,
-    )?;
+    validate_nodes(conn, spec, &layers, &output_index, &mut violations)?;
 
     let report = ValidationReport {
         event: if violations.iter().any(|v| v.severity == "error") {
@@ -223,7 +609,10 @@ pub fn config_hash(node: &NodeSpec) -> Result<String> {
     hash::config_sha256(&node.config)
 }
 
-fn collect_layers(spec: &WorkflowSpec, violations: &mut Vec<InvariantViolation>) -> BTreeSet<String> {
+fn collect_layers(
+    spec: &WorkflowSpec,
+    violations: &mut Vec<InvariantViolation>,
+) -> BTreeSet<String> {
     let mut layers = BTreeSet::new();
     for layer in &spec.layers {
         if layer.layer.trim().is_empty() {
@@ -280,7 +669,10 @@ fn collect_outputs(
                 violations.push(InvariantViolation::error(
                     "DUPLICATE_OUTPUT_ROLE",
                     json!({"node_id": node.node_id, "role": output.role}),
-                    format!("duplicate output role {} on node {}", output.role, node.node_id),
+                    format!(
+                        "duplicate output role {} on node {}",
+                        output.role, node.node_id
+                    ),
                 ));
             }
             outputs.insert(
@@ -323,7 +715,10 @@ fn collect_edges(
                 violations.push(InvariantViolation::error(
                     "UNKNOWN_INPUT_NODE",
                     json!({"node_id": node.node_id, "from": input.from}),
-                    format!("node {} references unknown input node {}", node.node_id, input.from),
+                    format!(
+                        "node {} references unknown input node {}",
+                        node.node_id, input.from
+                    ),
                 ));
                 continue;
             }
@@ -360,18 +755,25 @@ fn validate_nodes(
             violations.push(InvariantViolation::error(
                 "UNKNOWN_CELL_LAYER",
                 json!({"node_id": node.node_id, "layer": node.cell.layer}),
-                format!("node {} uses unknown cell layer {}", node.node_id, node.cell.layer),
+                format!(
+                    "node {} uses unknown cell layer {}",
+                    node.node_id, node.cell.layer
+                ),
             ));
         }
         let Some(algorithm) = load_algorithm(conn, &node.algorithm)? else {
             violations.push(InvariantViolation::error(
                 "UNKNOWN_ALGORITHM",
                 json!({"node_id": node.node_id, "algorithm_id": node.algorithm}),
-                format!("node {} uses unknown algorithm {}", node.node_id, node.algorithm),
+                format!(
+                    "node {} uses unknown algorithm {}",
+                    node.node_id, node.algorithm
+                ),
             ));
             continue;
         };
-        validate_algorithm_contract(conn, node, &algorithm, violations)?;
+        validate_algorithm_contract(conn, node, &algorithm, outputs, violations)?;
+        validate_authority_lineage_shape(node, outputs, violations);
         violations.extend(validate_algorithm_mode(
             conn,
             &algorithm,
@@ -379,7 +781,10 @@ fn validate_nodes(
             spec.driver.allow_external_write,
             spec.driver.allow_broker_resource,
         )?);
-        violations.extend(validate_class_c_outputs(&algorithm, &output_product_types(node)));
+        violations.extend(validate_class_c_outputs(
+            &algorithm,
+            &output_product_types(node),
+        ));
 
         for input in &node.inputs {
             if let Some(product_type) = outputs.get(&(input.from.clone(), input.role.clone())) {
@@ -400,17 +805,43 @@ fn validate_algorithm_contract(
     conn: &Connection,
     node: &NodeSpec,
     algorithm: &Algorithm,
+    outputs: &BTreeMap<(String, String), String>,
     violations: &mut Vec<InvariantViolation>,
 ) -> Result<()> {
+    for input in &node.inputs {
+        if let Some(product_type) = outputs.get(&(input.from.clone(), input.role.clone())) {
+            if !algorithm
+                .inputs
+                .iter()
+                .any(|allowed| allowed == product_type)
+            {
+                violations.push(InvariantViolation::error(
+                    "INPUT_CONTRACT_MISMATCH",
+                    json!({"node_id": node.node_id, "algorithm_id": algorithm.algorithm_id, "product_type": product_type, "from": input.from, "role": input.role}),
+                    format!(
+                        "algorithm {} does not declare input {}",
+                        algorithm.algorithm_id, product_type
+                    ),
+                ));
+            }
+        }
+    }
     for output in &node.outputs {
         if load_product_type(conn, &output.product_type)?.is_none() {
             violations.push(InvariantViolation::error(
                 "UNKNOWN_PRODUCT_TYPE",
                 json!({"node_id": node.node_id, "product_type": output.product_type}),
-                format!("node {} declares unknown product type {}", node.node_id, output.product_type),
+                format!(
+                    "node {} declares unknown product type {}",
+                    node.node_id, output.product_type
+                ),
             ));
         }
-        if !algorithm.outputs.iter().any(|allowed| allowed == &output.product_type) {
+        if !algorithm
+            .outputs
+            .iter()
+            .any(|allowed| allowed == &output.product_type)
+        {
             violations.push(InvariantViolation::error(
                 "OUTPUT_CONTRACT_MISMATCH",
                 json!({"node_id": node.node_id, "algorithm_id": algorithm.algorithm_id, "product_type": output.product_type}),
@@ -422,6 +853,64 @@ fn validate_algorithm_contract(
         }
     }
     Ok(())
+}
+
+fn validate_authority_lineage_shape(
+    node: &NodeSpec,
+    outputs: &BTreeMap<(String, String), String>,
+    violations: &mut Vec<InvariantViolation>,
+) {
+    for output in &node.outputs {
+        match output.product_type.as_str() {
+            "staged_order_set.v1" => {
+                if !node_has_input_product_type(node, outputs, "risk_decision_set.v1") {
+                    violations.push(InvariantViolation::error(
+                        "STAGED_ORDER_REQUIRES_APPROVED_RISK",
+                        json!({"node_id": node.node_id, "product_type": output.product_type}),
+                        format!(
+                            "node {} produces staged orders without a risk decision parent",
+                            node.node_id
+                        ),
+                    ));
+                }
+            }
+            "broker_event_set.v1" => {
+                if !node_has_input_product_type(node, outputs, "staged_order_set.v1") {
+                    violations.push(InvariantViolation::error(
+                        "BROKER_EVENT_REQUIRES_STAGED_ORDER",
+                        json!({"node_id": node.node_id, "product_type": output.product_type}),
+                        format!(
+                            "node {} produces broker events without a staged order parent",
+                            node.node_id
+                        ),
+                    ));
+                }
+                if !node_has_input_product_type(node, outputs, "reconciliation_snapshot.v1") {
+                    violations.push(InvariantViolation::error(
+                        "BROKER_EVENT_REQUIRES_RECONCILIATION",
+                        json!({"node_id": node.node_id, "product_type": output.product_type}),
+                        format!(
+                            "node {} produces broker events without a reconciliation parent",
+                            node.node_id
+                        ),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn node_has_input_product_type(
+    node: &NodeSpec,
+    outputs: &BTreeMap<(String, String), String>,
+    expected_product_type: &str,
+) -> bool {
+    node.inputs.iter().any(|input| {
+        outputs
+            .get(&(input.from.clone(), input.role.clone()))
+            .is_some_and(|product_type| product_type == expected_product_type)
+    })
 }
 
 pub fn topological_order(
@@ -475,24 +964,37 @@ mod tests {
 
     fn memory_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../../schema.sql")).unwrap();
+        conn.execute_batch(include_str!("../../../schema.sql"))
+            .unwrap();
         seed_product_graph_reference_data(&conn).unwrap();
         conn
     }
 
     #[test]
     fn graph_rejects_cycle() {
-        let text = r#"{
-          "spec_version": 1,
-          "workflow_name": "cycle",
-          "driver": {"driver_id":"test","mode":"observe","decision_as_of":"2026-05-08T13:00:00.000Z","allow_external_write":false,"allow_broker_resource":false},
-          "layers": [{"layer":"job","parent":null,"key_fields":["id"]}],
-          "resources": [],
-          "nodes": [
-            {"node_id":"a","algorithm":"noop.test.v1","cell":{"layer":"job","key":{"id":"a"}},"config":{},"inputs":[{"from":"b","role":"output"}],"outputs":[{"role":"output","product_type":"command_output.v1"}]},
-            {"node_id":"b","algorithm":"noop.test.v1","cell":{"layer":"job","key":{"id":"b"}},"config":{},"inputs":[{"from":"a","role":"output"}],"outputs":[{"role":"output","product_type":"command_output.v1"}]}
-          ]
-        }"#;
+        let text = r#"
+workflow cycle
+driver test
+mode observe
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+layer job key id
+
+node a
+  alg noop.test.v1
+  cell job id=a
+  input output from b.output
+  output output command_output.v1
+end
+
+node b
+  alg noop.test.v1
+  cell job id=b
+  input output from a.output
+  output output command_output.v1
+end
+"#;
         let conn = memory_conn();
         let (report, valid) = validate_workflow(&conn, parse_workflow_spec(text).unwrap()).unwrap();
         assert!(valid.is_none());
@@ -504,17 +1006,30 @@ mod tests {
 
     #[test]
     fn graph_rejects_class_a_consuming_class_c() {
-        let text = r#"{
-          "spec_version": 1,
-          "workflow_name": "class",
-          "driver": {"driver_id":"test","mode":"shadow","decision_as_of":"2026-05-08T13:00:00.000Z","allow_external_write":false,"allow_broker_resource":false},
-          "layers": [{"layer":"job","parent":null,"key_fields":["id"]}],
-          "resources": [],
-          "nodes": [
-            {"node_id":"report","algorithm":"cmd.report.daily.v1","cell":{"layer":"job","key":{"id":"r"}},"config":{"date":"today"},"inputs":[],"outputs":[{"role":"report","product_type":"report.v1"}]},
-            {"node_id":"gate","algorithm":"cmd.gate.v1","cell":{"layer":"job","key":{"id":"g"}},"config":{"core_lib":"build/libfolio.so"},"inputs":[{"from":"report","role":"report"}],"outputs":[{"role":"risk_decisions","product_type":"risk_decision_set.v1"}]}
-          ]
-        }"#;
+        let text = r#"
+workflow class
+driver test
+mode shadow
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+layer job key id
+
+node report
+  alg cmd.report.daily.v1
+  cell job id=r
+  set date today
+  output report report.v1
+end
+
+node gate
+  alg cmd.gate.v1
+  cell job id=g
+  set core_lib build/libfolio.so
+  input report from report.report
+  output risk_decisions risk_decision_set.v1
+end
+"#;
         let conn = memory_conn();
         let (report, valid) = validate_workflow(&conn, parse_workflow_spec(text).unwrap()).unwrap();
         assert!(valid.is_none());
@@ -526,16 +1041,22 @@ mod tests {
 
     #[test]
     fn graph_rejects_broker_in_shadow() {
-        let text = r#"{
-          "spec_version": 1,
-          "workflow_name": "broker_shadow",
-          "driver": {"driver_id":"test","mode":"shadow","decision_as_of":"2026-05-08T13:00:00.000Z","allow_external_write":false,"allow_broker_resource":false},
-          "layers": [{"layer":"job","parent":null,"key_fields":["id"]}],
-          "resources": [],
-          "nodes": [
-            {"node_id":"send","algorithm":"cmd.send.mock.v1","cell":{"layer":"job","key":{"id":"s"}},"config":{"max_reconciliation_age_s":3600},"inputs":[],"outputs":[{"role":"broker_events","product_type":"broker_event_set.v1"}]}
-          ]
-        }"#;
+        let text = r#"
+workflow broker_shadow
+driver test
+mode shadow
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+layer job key id
+
+node send
+  alg cmd.send.mock.v1
+  cell job id=s
+  set max_reconciliation_age_s 3600
+  output broker_events broker_event_set.v1
+end
+"#;
         let conn = memory_conn();
         let (report, valid) = validate_workflow(&conn, parse_workflow_spec(text).unwrap()).unwrap();
         assert!(valid.is_none());
@@ -543,5 +1064,125 @@ mod tests {
             .violations
             .iter()
             .any(|v| v.invariant_id == "BROKER_RESOURCE_MODE"));
+    }
+
+    #[test]
+    fn graph_rejects_input_contract_mismatch() {
+        let text = r#"
+workflow input_contract
+driver test
+mode shadow
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+layer job key id
+
+node value
+  alg cmd.value.v1
+  cell job id=v
+  set core_lib build/libfolio.so
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set target_gross_exposure_ratio 0.50
+  set max_name_weight_ratio 0.05
+  set max_order_notional_usd 10000
+  set min_adv_usd 1000000
+  set max_adv_participation_ratio 0.01
+  set max_reconciliation_age_s 3600
+  output valuations valuation_set.v1
+end
+
+node gate
+  alg cmd.gate.v1
+  cell job id=g
+  set core_lib build/libfolio.so
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set max_name_weight_ratio 0.05
+  set max_order_notional_usd 10000
+  set min_adv_usd 1000000
+  set max_adv_participation_ratio 0.01
+  set max_reconciliation_age_s 3600
+  input valuations from value.valuations
+  output risk_decisions risk_decision_set.v1
+end
+"#;
+        let conn = memory_conn();
+        let (report, valid) = validate_workflow(&conn, parse_workflow_spec(text).unwrap()).unwrap();
+        assert!(valid.is_none());
+        assert!(report
+            .violations
+            .iter()
+            .any(|v| v.invariant_id == "INPUT_CONTRACT_MISMATCH"));
+    }
+
+    #[test]
+    fn graph_rejects_broker_event_without_staged_parent() {
+        let text = r#"
+workflow send_without_stage
+driver test
+mode paper
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write true
+allow_broker_resource true
+layer job key id
+
+node recon
+  alg cmd.recon.v1
+  cell job id=r
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set reconciled true
+  output reconciliation reconciliation_snapshot.v1
+end
+
+node send
+  alg cmd.send.mock.v1
+  cell job id=s
+  input reconciliation from recon.reconciliation
+  set max_reconciliation_age_s 3600
+  output broker_events broker_event_set.v1
+end
+"#;
+        let conn = memory_conn();
+        let (report, valid) = validate_workflow(&conn, parse_workflow_spec(text).unwrap()).unwrap();
+        assert!(valid.is_none());
+        assert!(report
+            .violations
+            .iter()
+            .any(|v| v.invariant_id == "BROKER_EVENT_REQUIRES_STAGED_ORDER"));
+    }
+
+    #[test]
+    fn graph_validates_full_analysis_flow() {
+        let conn = memory_conn();
+        let parsed = parse_workflow_spec(include_str!(
+            "../../../docs/contracts/workflow.full_analysis.flow"
+        ))
+        .unwrap();
+        let (report, valid) = validate_workflow(&conn, parsed).unwrap();
+        assert!(valid.is_some(), "{:?}", report.violations);
+        assert_eq!(
+            report.topological_order.first().map(String::as_str),
+            Some("reconcile")
+        );
+        assert_eq!(
+            report.topological_order.last().map(String::as_str),
+            Some("report")
+        );
+        assert_eq!(report.node_count, 6);
+    }
+
+    #[test]
+    fn graph_validates_stage_and_paper_flows() {
+        let conn = memory_conn();
+        for text in [
+            include_str!("../../../docs/contracts/workflow.stage_orders.flow"),
+            include_str!("../../../docs/contracts/workflow.paper_mock.flow"),
+        ] {
+            let parsed = parse_workflow_spec(text).unwrap();
+            let (report, valid) = validate_workflow(&conn, parsed).unwrap();
+            assert!(valid.is_some(), "{:?}", report.violations);
+        }
     }
 }

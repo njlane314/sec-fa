@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 mod fa_core;
 mod framework;
 
 use crate::fa_core::*;
 use anyhow::{anyhow, bail, Context as _, Result};
 use base64::Engine as _;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sec_filings::{parse_xbrl_package, ParseRequest};
 use serde::{Deserialize, Serialize};
@@ -26,6 +28,13 @@ const DEFAULT_USER_AGENT: &str = "sec-fa operator@example.invalid";
 const DEFAULT_DATABENTO_BASE_URL: &str = "https://hist.databento.com/v0";
 const DEFAULT_DATABENTO_DATASET: &str = "EQUS.MINI";
 const DEFAULT_DATABENTO_SCHEMA: &str = "ohlcv-1d";
+const FEATURE_VERSION: &str = "features_v1";
+const FEATURE_MISSING_PREVIOUS: i64 = 1i64 << 0;
+const FEATURE_NON_COMPARABLE_PREVIOUS: i64 = 1i64 << 1;
+const FEATURE_MISSING_REVENUE: i64 = 1i64 << 2;
+const FEATURE_MISSING_FCF: i64 = 1i64 << 3;
+const FEATURE_MISSING_SHARES: i64 = 1i64 << 4;
+const FEATURE_STATEMENT_FLAGGED: i64 = 1i64 << 5;
 const TOTAL_DIMENSIONS_JSON: &str = "{}";
 
 #[derive(Debug)]
@@ -48,318 +57,30 @@ fn fail<T>(code: i32, message: impl Into<String>) -> Result<T> {
     }))
 }
 
+fn parse_flow_path(value: &str) -> std::result::Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    if path.extension().and_then(|ext| ext.to_str()) == Some("flow") {
+        Ok(path)
+    } else {
+        Err("workflow path must end in .flow".to_string())
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "sec",
     version,
-    about = "SEC filings to fundamental-analysis operations toolchain"
+    about = "Run SEC fundamental-analysis workflows from .flow files"
 )]
 struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    Init {
-        #[arg(long, default_value = DEFAULT_DB_PATH)]
-        db: PathBuf,
-    },
-    Sym {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        cik: String,
-        #[arg(long)]
-        symbol: String,
-        #[arg(long = "price-usd", default_value_t = 0.0)]
-        price_usd: f64,
-        #[arg(long = "adv-usd", default_value_t = 0.0)]
-        adv_usd: f64,
-        #[arg(long, default_value_t = 0)]
-        investable: i64,
-    },
-    ImportSecurities {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long = "csv")]
-        csv_path: PathBuf,
-        #[arg(long = "default-investable", default_value_t = 1)]
-        default_investable: i64,
-    },
-    IngestUniverse {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long = "csv")]
-        csv_path: PathBuf,
-        #[arg(long = "raw-root", default_value = "raw")]
-        raw_root: PathBuf,
-        #[arg(long, default_value = DEFAULT_FUNDAMENTAL_FORMS)]
-        forms: String,
-        #[arg(long = "user-agent", default_value = "")]
-        user_agent: String,
-        #[arg(long = "default-investable", default_value_t = 1)]
-        default_investable: i64,
-        #[arg(long = "limit-per-cik", default_value_t = 1)]
-        limit_per_cik: usize,
-        #[arg(long = "annual-limit-per-cik", default_value_t = 1)]
-        annual_limit_per_cik: usize,
-        #[arg(long = "quarterly-limit-per-cik", default_value_t = 4)]
-        quarterly_limit_per_cik: usize,
-        #[arg(long = "sleep-s", default_value_t = 0.2)]
-        sleep_s: f64,
-        #[arg(long = "pull-sleep-s", default_value_t = 0.15)]
-        pull_sleep_s: f64,
-        #[arg(long = "continue-on-error")]
-        continue_on_error: bool,
-        #[arg(long = "universe-name", default_value = "")]
-        universe_name: String,
-        #[arg(long = "min-adv-usd", default_value_t = 0.0)]
-        min_adv_usd: f64,
-        #[arg(long = "min-fact-count", default_value_t = 2)]
-        min_fact_count: i64,
-        #[arg(long = "server-url", env = "SEC_FA_SERVER_URL")]
-        server_url: Option<String>,
-    },
-    Databento {
-        #[arg(long, default_value = DEFAULT_DB_PATH)]
-        db: PathBuf,
-        #[arg(long)]
-        out: Option<PathBuf>,
-        #[arg(long)]
-        symbols: String,
-        #[arg(long, default_value = DEFAULT_DATABENTO_DATASET)]
-        dataset: String,
-        #[arg(long, default_value = DEFAULT_DATABENTO_SCHEMA)]
-        schema: String,
-        #[arg(long = "stype-in", default_value = "raw_symbol")]
-        stype_in: String,
-        #[arg(long = "base-url", default_value = DEFAULT_DATABENTO_BASE_URL)]
-        base_url: String,
-        #[arg(long)]
-        start: Option<String>,
-        #[arg(long)]
-        end: Option<String>,
-        #[arg(long = "lookback-days", default_value_t = 7)]
-        lookback_days: i64,
-        #[arg(long = "adv-window-days", default_value_t = 5)]
-        adv_window_days: usize,
-        #[arg(long, default_value = "US")]
-        countries: String,
-        #[arg(long = "security-types", default_value = "EQS")]
-        security_types: String,
-        #[arg(long = "default-investable", default_value_t = 1)]
-        default_investable: i64,
-        #[arg(long = "import-db")]
-        import_db: bool,
-        #[arg(long = "max-symbols", default_value_t = 100)]
-        max_symbols: usize,
-    },
-    Pos {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        cik: String,
-        #[arg(long = "quantity-shares", default_value_t = 0.0)]
-        quantity_shares: f64,
-        #[arg(long = "market-value-usd", default_value_t = 0.0)]
-        market_value_usd: f64,
-        #[arg(long = "weight-ratio", default_value_t = 0.0)]
-        weight_ratio: f64,
-    },
-    Watch {
-        #[arg(long, default_value = DEFAULT_DB_PATH)]
-        db: PathBuf,
-        #[arg(long)]
-        cik: String,
-        #[arg(long = "user-agent", default_value = "")]
-        user_agent: String,
-        #[arg(long, default_value_t = 40)]
-        limit: usize,
-        #[arg(long, default_value = DEFAULT_WATCH_FORMS)]
-        forms: String,
-        #[arg(long = "server-url", env = "SEC_FA_SERVER_URL")]
-        server_url: Option<String>,
-    },
-    Pull {
-        #[arg(long, default_value = DEFAULT_DB_PATH)]
-        db: PathBuf,
-        #[arg(long = "raw-root", default_value = "raw")]
-        raw_root: PathBuf,
-        #[arg(long = "user-agent", default_value = "")]
-        user_agent: String,
-        #[arg(long)]
-        accession: Option<String>,
-        #[arg(long)]
-        cik: Option<String>,
-        #[arg(long, default_value = "")]
-        forms: String,
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-        #[arg(long = "sleep-s", default_value_t = 0.15)]
-        sleep_s: f64,
-        #[arg(long = "server-url", env = "SEC_FA_SERVER_URL")]
-        server_url: Option<String>,
-    },
-    Xbrl {
-        #[arg(long, default_value = DEFAULT_DB_PATH)]
-        db: PathBuf,
-        #[arg(long)]
-        accession: Option<String>,
-        #[arg(long)]
-        cik: Option<String>,
-        #[arg(long)]
-        symbol: Option<String>,
-        #[arg(long)]
-        form: Option<String>,
-        #[arg(long = "filed-at")]
-        filed_at: Option<String>,
-        #[arg(long = "accepted-at")]
-        accepted_at: Option<String>,
-        #[arg(long = "raw-root", default_value = "raw")]
-        raw_root: PathBuf,
-        #[arg(long = "package-root")]
-        package_root: Option<PathBuf>,
-        #[arg(long = "user-agent", default_value = "")]
-        user_agent: String,
-        #[arg(long)]
-        latest: bool,
-        #[arg(long, default_value = "")]
-        forms: String,
-        #[arg(long = "sleep-s", default_value_t = 0.0)]
-        sleep_s: f64,
-        #[arg(long)]
-        strict: bool,
-    },
-    Univ {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long, default_value = "default")]
-        name: String,
-        #[arg(long = "min-adv-usd", default_value_t = 0.0)]
-        min_adv_usd: f64,
-        #[arg(long = "min-fact-count", default_value_t = 0)]
-        min_fact_count: i64,
-    },
-    Recon {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long = "portfolio-value-usd", default_value_t = 0.0)]
-        portfolio_value_usd: f64,
-        #[arg(long = "cash-usd", default_value_t = 0.0)]
-        cash_usd: f64,
-        #[arg(long, default_value_t = 0)]
-        reconciled: i64,
-    },
-    Plan(ModelArgs),
-    Value(ModelArgs),
-    Gate(GateArgs),
-    Stage {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long = "run-id")]
-        run_id: Option<String>,
-        #[arg(long, default_value_t = 100)]
-        limit: i64,
-        #[arg(long)]
-        autonomous: bool,
-    },
-    Send {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long, default_value = "mock")]
-        adapter: String,
-        #[arg(long, default_value_t = 100)]
-        limit: i64,
-        #[arg(long = "max-reconciliation-age-s", default_value_t = 3600)]
-        max_reconciliation_age_s: i64,
-    },
-    Mode {
-        #[arg(long)]
-        db: PathBuf,
-        mode: String,
-    },
-    Halt {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long, default_value = "")]
-        reason: String,
-    },
-    Stat {
-        #[arg(long)]
-        db: PathBuf,
-    },
-    Report {
-        kind: Option<String>,
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long, default_value = "today")]
-        date: String,
-    },
-    Ping {
-        #[arg(long, default_value = "")]
-        method: String,
-        #[arg(long, default_value = "sec-fa")]
-        title: String,
-        #[arg(long, default_value = "")]
-        message: String,
-        #[arg(long, default_value = "default")]
-        priority: String,
-        #[arg(long = "ntfy-topic", default_value = "")]
-        ntfy_topic: String,
-    },
-    Graph {
-        #[command(subcommand)]
-        command: GraphCommand,
-    },
-    Product {
-        #[command(subcommand)]
-        command: ProductCommand,
-    },
-    Replay {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long = "workflow-run-id")]
-        workflow_run_id: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum GraphCommand {
-    Validate {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        spec: PathBuf,
-    },
-    Run {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        spec: PathBuf,
-    },
-    Explain {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        spec: PathBuf,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum ProductCommand {
-    Show {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long = "product-id")]
-        product_id: String,
-    },
-    Lineage {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long = "product-id")]
-        product_id: String,
-    },
+    #[arg(long, default_value = DEFAULT_DB_PATH)]
+    db: PathBuf,
+    #[arg(long)]
+    validate: bool,
+    #[arg(long)]
+    explain: bool,
+    #[arg(value_name = "WORKFLOW.flow", value_parser = parse_flow_path)]
+    workflow: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -448,210 +169,74 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
-        None => {
-            print_help();
-            Ok(())
-        }
-        Some(Command::Init { db }) => cmd_init(&db),
-        Some(Command::Sym {
-            db,
-            cik,
-            symbol,
-            price_usd,
-            adv_usd,
-            investable,
-        }) => cmd_sym(&db, &cik, &symbol, price_usd, adv_usd, investable != 0),
-        Some(Command::ImportSecurities {
-            db,
-            csv_path,
-            default_investable,
-        }) => cmd_import_securities(&db, &csv_path, default_investable != 0),
-        Some(Command::IngestUniverse {
-            db,
-            csv_path,
-            raw_root,
-            forms,
-            user_agent,
-            default_investable,
-            limit_per_cik,
-            annual_limit_per_cik,
-            quarterly_limit_per_cik,
-            sleep_s,
-            pull_sleep_s,
-            continue_on_error,
-            universe_name,
-            min_adv_usd,
-            min_fact_count,
-            server_url,
-        }) => cmd_ingest_universe(
-            &db,
-            &csv_path,
-            &raw_root,
-            &forms,
-            &user_agent,
-            default_investable != 0,
-            limit_per_cik,
-            annual_limit_per_cik,
-            quarterly_limit_per_cik,
-            sleep_s,
-            pull_sleep_s,
-            continue_on_error,
-            &universe_name,
-            min_adv_usd,
-            min_fact_count,
-            server_url.as_deref(),
-        ),
-        Some(Command::Databento {
-            db,
-            out,
-            symbols,
-            dataset,
-            schema,
-            stype_in,
-            base_url,
-            start,
-            end,
-            lookback_days,
-            adv_window_days,
-            countries,
-            security_types,
-            default_investable,
-            import_db,
-            max_symbols,
-        }) => cmd_databento(
-            &db,
-            out.as_deref(),
-            &symbols,
-            &dataset,
-            &schema,
-            &stype_in,
-            &base_url,
-            start.as_deref(),
-            end.as_deref(),
-            lookback_days,
-            adv_window_days,
-            &countries,
-            &security_types,
-            default_investable != 0,
-            import_db,
-            max_symbols,
-        ),
-        Some(Command::Pos {
-            db,
-            cik,
-            quantity_shares,
-            market_value_usd,
-            weight_ratio,
-        }) => cmd_pos(&db, &cik, quantity_shares, market_value_usd, weight_ratio),
-        Some(Command::Watch {
-            db,
-            cik,
-            user_agent,
-            limit,
-            forms,
-            server_url,
-        }) => cmd_watch(&db, &cik, &user_agent, limit, &forms, server_url.as_deref()),
-        Some(Command::Pull {
-            db,
-            raw_root,
-            user_agent,
-            accession,
-            cik,
-            forms,
-            limit,
-            sleep_s,
-            server_url,
-        }) => cmd_pull(
-            &db,
-            &raw_root,
-            &user_agent,
-            accession.as_deref(),
-            cik.as_deref(),
-            &forms,
-            limit,
-            sleep_s,
-            server_url.as_deref(),
-        ),
-        Some(Command::Xbrl {
-            db,
-            accession,
-            cik,
-            symbol: _,
-            form,
-            filed_at,
-            accepted_at,
-            raw_root,
-            package_root,
-            user_agent: _,
-            latest,
-            forms,
-            sleep_s: _,
-            strict: _,
-        }) => cmd_xbrl(
-            &db,
-            accession,
-            cik,
-            form,
-            filed_at,
-            accepted_at,
-            raw_root,
-            package_root,
-            latest,
-            forms,
-        ),
-        Some(Command::Univ {
-            db,
-            name,
-            min_adv_usd,
-            min_fact_count,
-        }) => cmd_univ(&db, &name, min_adv_usd, min_fact_count),
-        Some(Command::Recon {
-            db,
-            portfolio_value_usd,
-            cash_usd,
-            reconciled,
-        }) => cmd_recon(&db, portfolio_value_usd, cash_usd, reconciled != 0),
-        Some(Command::Plan(args)) => cmd_plan(args),
-        Some(Command::Value(args)) => cmd_value(args),
-        Some(Command::Gate(args)) => cmd_gate(args),
-        Some(Command::Stage {
-            db,
-            run_id,
-            limit,
-            autonomous: _,
-        }) => cmd_stage(&db, run_id.as_deref(), limit),
-        Some(Command::Send {
-            db,
-            adapter,
-            limit,
-            max_reconciliation_age_s,
-        }) => cmd_send(&db, &adapter, limit, max_reconciliation_age_s),
-        Some(Command::Mode { db, mode }) => cmd_mode(&db, &mode),
-        Some(Command::Halt { db, reason }) => {
-            set_mode(&db, "halted", "trading_halted", json!({"reason": reason}))
-        }
-        Some(Command::Stat { db }) => cmd_stat(&db),
-        Some(Command::Report { kind: _, db, date }) => cmd_report(&db, &date),
-        Some(Command::Ping {
-            method,
-            title,
-            message,
-            priority,
-            ntfy_topic,
-        }) => cmd_ping(&method, &title, &message, &priority, &ntfy_topic),
-        Some(Command::Graph { command }) => cmd_graph(command),
-        Some(Command::Product { command }) => cmd_product(command),
-        Some(Command::Replay {
-            db,
-            workflow_run_id,
-        }) => cmd_replay(&db, &workflow_run_id),
+    run_flow_cli(cli)
+}
+
+fn run_flow_cli(cli: Cli) -> Result<()> {
+    if cli.validate && cli.explain {
+        fail(1, "--validate and --explain cannot be used together")?;
     }
+
+    let Some(spec) = cli.workflow else {
+        print_help();
+        return Ok(());
+    };
+
+    let mut conn = open_or_init_db(&cli.db)?;
+    let parsed = framework::graph::load_workflow_spec(&spec)?;
+    let (report, validated) = framework::graph::validate_workflow(&conn, parsed)?;
+    json_line(&report)?;
+
+    let Some(validated) = validated else {
+        return fail(3, "workflow validation failed");
+    };
+
+    if cli.validate {
+        return Ok(());
+    }
+
+    if cli.explain {
+        return explain_validated_workflow(&conn, &validated);
+    }
+
+    framework::executor::run_validated_workflow(&mut conn, &cli.db, validated)?;
+    Ok(())
+}
+
+fn explain_validated_workflow(
+    conn: &Connection,
+    validated: &framework::graph::ValidatedWorkflow,
+) -> Result<()> {
+    let mut nodes = Vec::<Value>::new();
+    for node_id in &validated.order {
+        let node = framework::graph::node_by_id(&validated.parsed.spec, node_id)
+            .ok_or_else(|| anyhow!("validated node {node_id} missing"))?;
+        let algorithm = framework::registry::load_algorithm(conn, &node.algorithm)?
+            .ok_or_else(|| anyhow!("algorithm {} missing", node.algorithm))?;
+        nodes.push(json!({
+            "node_id": node.node_id,
+            "algorithm_id": algorithm.algorithm_id,
+            "cell_id": framework::graph::cell_id(node)?,
+            "resources": algorithm.resources,
+            "outputs": node.outputs,
+        }));
+    }
+    json_line(&json!({
+        "event": "workflow_explained",
+        "workflow_name": validated.parsed.spec.workflow_name,
+        "workflow_spec_sha256": validated.parsed.spec_sha256,
+        "topological_order": validated.order,
+        "edge_count": validated.edges.len(),
+        "nodes": nodes
+    }))
 }
 
 fn print_help() {
-    println!("usage: sec <command> [options]\n");
-    println!("commands: init sym import-securities ingest-universe databento pos watch pull xbrl univ recon plan value gate stage send mode halt stat report ping graph product replay");
+    println!("usage: sec [--db PATH] [--validate|--explain] WORKFLOW.flow\n");
+    println!("examples:");
+    println!("  sec --db .fa.db docs/contracts/workflow.full_analysis.flow");
+    println!("  sec --db .fa.db --validate docs/contracts/workflow.stage_orders.flow");
+    println!("  sec --db .fa.db --explain docs/contracts/workflow.paper_mock.flow");
 }
 
 fn open_db(path: &Path) -> Result<Connection> {
@@ -674,11 +259,22 @@ fn ensure_db(conn: &Connection) -> Result<()> {
             "database is not initialized; run `init` or `init --db <path>` first",
         )
     } else {
-        let schema = load_schema_sql()?;
-        conn.execute_batch(&schema)?;
-        framework::registry::seed_product_graph_reference_data(conn)?;
+        upgrade_db(conn)?;
+        seed_reference_data(conn)?;
         Ok(())
     }
+}
+
+fn open_or_init_db(db_path: &Path) -> Result<Connection> {
+    if let Some(parent) = db_path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    let conn = open_db(db_path)?;
+    let schema = load_schema_sql()?;
+    conn.execute_batch(&schema)?;
+    upgrade_db(&conn)?;
+    seed_reference_data(&conn)?;
+    Ok(conn)
 }
 
 fn cmd_init(db_path: &Path) -> Result<()> {
@@ -688,10 +284,178 @@ fn cmd_init(db_path: &Path) -> Result<()> {
     let conn = open_db(db_path)?;
     let schema = load_schema_sql()?;
     conn.execute_batch(&schema)?;
-    seed_metric_concept_candidates(&conn)?;
-    insert_total_dimension_signature(&conn)?;
-    framework::registry::seed_product_graph_reference_data(&conn)?;
+    upgrade_db(&conn)?;
+    seed_reference_data(&conn)?;
     json_line(&json!({"db": db_path, "status": "initialized"}))
+}
+
+fn seed_reference_data(conn: &Connection) -> Result<()> {
+    let schema = load_schema_sql()?;
+    conn.execute_batch(&schema)?;
+    seed_metric_concept_candidates(conn)?;
+    insert_total_dimension_signature(conn)?;
+    normalize_existing_peer_metadata(conn)?;
+    framework::registry::seed_product_graph_reference_data(conn)?;
+    Ok(())
+}
+
+fn upgrade_db(conn: &Connection) -> Result<()> {
+    migrate_algorithm_registry_executable_kind(conn)?;
+    ensure_column(
+        conn,
+        "securities",
+        "peer_group",
+        "ALTER TABLE securities ADD COLUMN peer_group TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
+        "securities",
+        "sector",
+        "ALTER TABLE securities ADD COLUMN sector TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
+        "securities",
+        "industry",
+        "ALTER TABLE securities ADD COLUMN industry TEXT NOT NULL DEFAULT ''",
+    )?;
+    Ok(())
+}
+
+fn migrate_algorithm_registry_executable_kind(conn: &Connection) -> Result<()> {
+    let ddl: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='algorithm_registry'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(ddl) = ddl else {
+        return Ok(());
+    };
+    if ddl.contains("'rust_operation'") {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE algorithm_registry_new (
+            algorithm_id TEXT PRIMARY KEY,
+            algorithm_name TEXT NOT NULL,
+            algorithm_version TEXT NOT NULL,
+            hazard_class TEXT NOT NULL CHECK (hazard_class IN ('A','B','C')),
+            purity TEXT NOT NULL CHECK (purity IN (
+                'pure',
+                'deterministic_io',
+                'external_read',
+                'external_write'
+            )),
+            deterministic INTEGER NOT NULL CHECK (deterministic IN (0,1)),
+            executable_kind TEXT NOT NULL CHECK (executable_kind IN (
+                'builtin',
+                'rust_operation',
+                'command',
+                'c_abi',
+                'noop_test'
+            )),
+            executable_ref TEXT NOT NULL,
+            input_contract_json TEXT NOT NULL,
+            output_contract_json TEXT NOT NULL,
+            resource_contract_json TEXT NOT NULL,
+            forbidden_resource_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO algorithm_registry_new(
+            algorithm_id,
+            algorithm_name,
+            algorithm_version,
+            hazard_class,
+            purity,
+            deterministic,
+            executable_kind,
+            executable_ref,
+            input_contract_json,
+            output_contract_json,
+            resource_contract_json,
+            forbidden_resource_json,
+            created_at
+        )
+        SELECT
+            algorithm_id,
+            algorithm_name,
+            algorithm_version,
+            hazard_class,
+            purity,
+            deterministic,
+            executable_kind,
+            executable_ref,
+            input_contract_json,
+            output_contract_json,
+            resource_contract_json,
+            forbidden_resource_json,
+            created_at
+        FROM algorithm_registry;
+        DROP TABLE algorithm_registry;
+        ALTER TABLE algorithm_registry_new RENAME TO algorithm_registry;
+        PRAGMA foreign_keys = ON;
+        ",
+    )?;
+    Ok(())
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut found = false;
+    for name in rows {
+        if name? == column {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        conn.execute_batch(ddl)?;
+    }
+    Ok(())
+}
+
+fn normalize_existing_peer_metadata(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT security_id, peer_group, sector, industry FROM securities ORDER BY security_id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })?;
+    let mut updates = Vec::new();
+    for row in rows {
+        let (security_id, peer_group, sector, industry) = row?;
+        let metadata = security_peer_metadata(&peer_group, &sector, &industry);
+        if metadata.peer_group != peer_group
+            || metadata.sector != sector
+            || metadata.industry != industry
+        {
+            updates.push((security_id, metadata));
+        }
+    }
+    drop(stmt);
+    for (security_id, metadata) in updates {
+        conn.execute(
+            "UPDATE securities SET peer_group=?, sector=?, industry=?, updated_at=? WHERE security_id=?",
+            params![
+                metadata.peer_group,
+                metadata.sector,
+                metadata.industry,
+                utc_now(),
+                security_id
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 fn cmd_sym(
@@ -701,21 +465,26 @@ fn cmd_sym(
     price: f64,
     adv: f64,
     investable: bool,
+    peer_group: &str,
+    sector: &str,
+    industry: &str,
 ) -> Result<()> {
     let mut conn = open_db(db_path)?;
     ensure_db(&conn)?;
     let cik10 = normalize_cik(cik);
     let security_id = cik10.parse::<i64>().unwrap_or(0);
     let now = utc_now();
+    let symbol_upper = symbol.to_ascii_uppercase();
+    let metadata = security_peer_metadata(peer_group, sector, industry);
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT INTO securities(security_id, cik, symbol, investable, price_usd, adv_usd, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(security_id) DO UPDATE SET cik=excluded.cik, symbol=excluded.symbol, investable=excluded.investable, price_usd=excluded.price_usd, adv_usd=excluded.adv_usd, updated_at=excluded.updated_at",
-        params![security_id, cik10, symbol.to_ascii_uppercase(), bool_int(investable), price, adv, now],
+        "INSERT INTO securities(security_id, cik, symbol, investable, price_usd, adv_usd, peer_group, sector, industry, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(security_id) DO UPDATE SET cik=excluded.cik, symbol=excluded.symbol, investable=excluded.investable, price_usd=excluded.price_usd, adv_usd=excluded.adv_usd, peer_group=excluded.peer_group, sector=excluded.sector, industry=excluded.industry, updated_at=excluded.updated_at",
+        params![security_id, cik10, symbol_upper, bool_int(investable), price, adv, metadata.peer_group.as_str(), metadata.sector.as_str(), metadata.industry.as_str(), now],
     )?;
     let event = append_event(
         &tx,
         "security_upserted",
-        json!({"security_id": security_id, "cik": cik10, "symbol": symbol.to_ascii_uppercase(), "investable": investable, "price_usd": price, "adv_usd": adv}),
+        json!({"security_id": security_id, "cik": cik10, "symbol": symbol_upper, "investable": investable, "price_usd": price, "adv_usd": adv, "peer_group": metadata.peer_group, "sector": metadata.sector, "industry": metadata.industry}),
     )?;
     tx.commit()?;
     json_line(&event)
@@ -730,6 +499,12 @@ struct SecurityCsvRow {
     adv_usd: f64,
     #[serde(default)]
     investable: Option<i64>,
+    #[serde(default)]
+    peer_group: String,
+    #[serde(default)]
+    sector: String,
+    #[serde(default)]
+    industry: String,
 }
 
 #[derive(Debug, Clone)]
@@ -739,6 +514,9 @@ struct SecuritySeed {
     price_usd: f64,
     adv_usd: f64,
     investable: bool,
+    peer_group: String,
+    sector: String,
+    industry: String,
 }
 
 #[derive(Debug, Clone)]
@@ -770,6 +548,9 @@ fn read_security_seed_file(csv_path: &Path, default_investable: bool) -> Result<
             price_usd: row.price_usd,
             adv_usd: row.adv_usd,
             investable: row.investable.map(|v| v != 0).unwrap_or(default_investable),
+            peer_group: row.peer_group,
+            sector: row.sector,
+            industry: row.industry,
         };
         match by_cik.get(&cik) {
             Some(existing) if existing.adv_usd >= seed.adv_usd => {}
@@ -790,9 +571,10 @@ fn import_security_seed_batch(conn: &mut Connection, batch: &SecuritySeedBatch) 
     let tx = conn.transaction()?;
     for seed in &batch.seeds {
         let security_id = seed.cik.parse::<i64>().unwrap_or(0);
+        let metadata = security_peer_metadata(&seed.peer_group, &seed.sector, &seed.industry);
         tx.execute(
-            "INSERT INTO securities(security_id, cik, symbol, investable, price_usd, adv_usd, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(security_id) DO UPDATE SET cik=excluded.cik, symbol=excluded.symbol, investable=excluded.investable, price_usd=excluded.price_usd, adv_usd=excluded.adv_usd, updated_at=excluded.updated_at",
-            params![security_id, seed.cik, seed.ticker, bool_int(seed.investable), seed.price_usd, seed.adv_usd, utc_now()],
+            "INSERT INTO securities(security_id, cik, symbol, investable, price_usd, adv_usd, peer_group, sector, industry, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(security_id) DO UPDATE SET cik=excluded.cik, symbol=excluded.symbol, investable=excluded.investable, price_usd=excluded.price_usd, adv_usd=excluded.adv_usd, peer_group=excluded.peer_group, sector=excluded.sector, industry=excluded.industry, updated_at=excluded.updated_at",
+            params![security_id, seed.cik, seed.ticker, bool_int(seed.investable), seed.price_usd, seed.adv_usd, metadata.peer_group, metadata.sector, metadata.industry, utc_now()],
         )?;
     }
     let event = append_event(
@@ -1204,6 +986,9 @@ struct DatabentoSecuritySeed {
     price_usd: f64,
     adv_usd: f64,
     investable: bool,
+    peer_group: String,
+    sector: String,
+    industry: String,
     shares_outstanding: f64,
     market_cap_usd: f64,
     latest_bar_time: String,
@@ -1546,6 +1331,9 @@ fn build_databento_security_seeds(
             price_usd: latest.close,
             adv_usd,
             investable,
+            peer_group: String::new(),
+            sector: String::new(),
+            industry: String::new(),
             shares_outstanding: security.shares_outstanding,
             market_cap_usd,
             latest_bar_time: latest.time.clone(),
@@ -1582,6 +1370,9 @@ fn write_databento_seed_csv(
         "price_usd",
         "adv_usd",
         "investable",
+        "peer_group",
+        "sector",
+        "industry",
         "company",
         "shares_outstanding",
         "market_cap_usd",
@@ -1597,6 +1388,9 @@ fn write_databento_seed_csv(
             &float_string(row.price_usd),
             &float_string(row.adv_usd),
             if row.investable { "1" } else { "0" },
+            row.peer_group.as_str(),
+            row.sector.as_str(),
+            row.industry.as_str(),
             row.issuer_name.as_str(),
             &float_string(row.shares_outstanding),
             &float_string(row.market_cap_usd),
@@ -1622,6 +1416,9 @@ fn databento_security_seed_batch(rows: &[DatabentoSecuritySeed]) -> SecuritySeed
                 price_usd: row.price_usd,
                 adv_usd: row.adv_usd,
                 investable: row.investable,
+                peer_group: row.peer_group.clone(),
+                sector: row.sector.clone(),
+                industry: row.industry.clone(),
             })
             .collect(),
     }
@@ -1844,6 +1641,35 @@ fn cmd_xbrl(
     latest: bool,
     forms: String,
 ) -> Result<()> {
+    let (event, stderr) = op_xbrl(
+        db_path,
+        accession,
+        cik,
+        form,
+        filed_at,
+        accepted_at,
+        raw_root,
+        package_root,
+        latest,
+        forms,
+    )?;
+    eprint!("{stderr}");
+    json_line(&event)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn op_xbrl(
+    db_path: &Path,
+    accession: Option<String>,
+    cik: Option<String>,
+    form: Option<String>,
+    filed_at: Option<String>,
+    accepted_at: Option<String>,
+    raw_root: PathBuf,
+    package_root: Option<PathBuf>,
+    latest: bool,
+    forms: String,
+) -> Result<(Value, String)> {
     let mut conn = open_db(db_path)?;
     ensure_db(&conn)?;
     let summary = parse_xbrl_package(
@@ -1860,8 +1686,14 @@ fn cmd_xbrl(
             forms: (!forms.is_empty()).then_some(forms),
         },
     )?;
-    eprintln!("xbrl packages processed documents={} raw_inserted={} selected_inserted={} derived_inserted=0 exceptions_inserted=0 parse_errors={}", summary.documents_stored.saturating_sub(1), summary.raw_facts_inserted, summary.canonical_selected_inserted, summary.parse_errors.len());
-    json_line(&summary.event)
+    let stderr = format!(
+        "xbrl packages processed documents={} raw_inserted={} selected_inserted={} derived_inserted=0 exceptions_inserted=0 parse_errors={}\n",
+        summary.documents_stored.saturating_sub(1),
+        summary.raw_facts_inserted,
+        summary.canonical_selected_inserted,
+        summary.parse_errors.len()
+    );
+    Ok((summary.event, stderr))
 }
 
 fn cmd_univ(db_path: &Path, name: &str, min_adv: f64, min_facts: i64) -> Result<()> {
@@ -1891,7 +1723,7 @@ fn cmd_univ(db_path: &Path, name: &str, min_adv: f64, min_facts: i64) -> Result<
     json_line(&event)
 }
 
-fn cmd_recon(db_path: &Path, portfolio_value: f64, cash: f64, reconciled: bool) -> Result<()> {
+fn op_recon(db_path: &Path, portfolio_value: f64, cash: f64, reconciled: bool) -> Result<Value> {
     let mut conn = open_db(db_path)?;
     ensure_db(&conn)?;
     let tx = conn.transaction()?;
@@ -1902,10 +1734,14 @@ fn cmd_recon(db_path: &Path, portfolio_value: f64, cash: f64, reconciled: bool) 
         json!({"reconciled": reconciled, "portfolio_value_usd": portfolio_value, "cash_usd": cash, "source": "manual_or_mock"}),
     )?;
     tx.commit()?;
-    json_line(&event)
+    Ok(event)
 }
 
-fn cmd_plan(args: ModelArgs) -> Result<()> {
+fn cmd_recon(db_path: &Path, portfolio_value: f64, cash: f64, reconciled: bool) -> Result<()> {
+    json_line(&op_recon(db_path, portfolio_value, cash, reconciled)?)
+}
+
+fn op_plan(args: ModelArgs) -> Result<Value> {
     let mut conn = open_db(&args.db)?;
     ensure_db(&conn)?;
     let core = Core::load(&args.core_lib)?;
@@ -1945,11 +1781,15 @@ fn cmd_plan(args: ModelArgs) -> Result<()> {
         )?;
         tx.commit()?;
         core.free_plan(&mut out);
-        json_line(&event)
+        Ok(event)
     }
 }
 
-fn cmd_value(args: ModelArgs) -> Result<()> {
+fn cmd_plan(args: ModelArgs) -> Result<()> {
+    json_line(&op_plan(args)?)
+}
+
+fn op_value(args: ModelArgs) -> Result<Value> {
     let mut conn = open_db(&args.db)?;
     ensure_db(&conn)?;
     let core = Core::load(&args.core_lib)?;
@@ -2024,11 +1864,542 @@ fn cmd_value(args: ModelArgs) -> Result<()> {
         tx.commit()?;
         core.free_value(&mut out);
         core.free_statements(&mut statement_out);
-        json_line(&event)
+        Ok(event)
     }
 }
 
-fn cmd_gate(args: GateArgs) -> Result<()> {
+fn cmd_value(args: ModelArgs) -> Result<()> {
+    json_line(&op_value(args)?)
+}
+
+#[derive(Debug, Clone)]
+struct FeatureStatementSource {
+    snapshot_id: String,
+    security_id: i64,
+    period_end_date: String,
+    available_at: String,
+    revenue_usd: f64,
+    net_income_usd: f64,
+    diluted_shares: f64,
+    operating_cash_flow_usd: f64,
+    capex_usd: f64,
+    free_cash_flow_usd: f64,
+    cash_usd: f64,
+    debt_usd: f64,
+    net_debt_usd: f64,
+    quality_flags: i64,
+    source_hash: String,
+}
+
+#[derive(Debug, Clone)]
+struct FeatureLatestSource {
+    statement: FeatureStatementSource,
+    symbol: String,
+    peer_group: String,
+    sector: String,
+    industry: String,
+}
+
+#[derive(Debug, Clone)]
+struct FeatureRow {
+    security_id: i64,
+    symbol: String,
+    peer_group: String,
+    sector: String,
+    industry: String,
+    period_end_date: String,
+    available_at: String,
+    revenue_ttm_usd: f64,
+    revenue_growth_yoy_ratio: f64,
+    net_margin_ratio: f64,
+    operating_cash_flow_ttm_usd: f64,
+    capex_ttm_usd: f64,
+    free_cash_flow_ttm_usd: f64,
+    fcf_margin_ratio: f64,
+    cash_usd: f64,
+    debt_usd: f64,
+    net_debt_usd: f64,
+    net_debt_to_revenue_ratio: f64,
+    diluted_shares: f64,
+    statement_quality_flags: i64,
+    feature_quality_flags: i64,
+    source_statement_snapshot_id: String,
+    previous_statement_snapshot_id: Option<String>,
+    row_hash: String,
+}
+
+fn op_feat(
+    db_path: &Path,
+    name: &str,
+    as_of: &str,
+    universe_snapshot_id: Option<&str>,
+    universe_name: &str,
+) -> Result<Value> {
+    let mut conn = open_db(db_path)?;
+    ensure_db(&conn)?;
+    let as_of_time = normalize_as_of_time(as_of)?;
+    let resolved_universe_id =
+        resolve_feature_universe_snapshot(&conn, universe_snapshot_id, universe_name)?;
+    let latest_sources =
+        load_latest_feature_sources(&conn, &as_of_time, resolved_universe_id.as_deref())?;
+    if latest_sources.is_empty() {
+        return fail(
+            1,
+            "no point-in-time statement snapshots available; run `value` after ingesting filings",
+        );
+    }
+
+    let mut source_payloads = Vec::<Value>::new();
+    let mut rows = Vec::<FeatureRow>::new();
+    for latest in latest_sources {
+        let previous = load_previous_feature_source(
+            &conn,
+            latest.statement.security_id,
+            &as_of_time,
+            &latest.statement.period_end_date,
+        )?;
+        source_payloads.push(json!({
+            "security_id": latest.statement.security_id,
+            "latest_snapshot_id": latest.statement.snapshot_id,
+            "latest_source_hash": latest.statement.source_hash,
+            "previous_snapshot_id": previous.as_ref().map(|s| s.snapshot_id.as_str()),
+            "previous_source_hash": previous.as_ref().map(|s| s.source_hash.as_str()),
+        }));
+        rows.push(build_feature_row(latest, previous));
+    }
+
+    let input_statement_hash = sha256_hex(canonical_json(&source_payloads).as_bytes());
+    let rule = json!({
+        "source": "statement_snapshots",
+        "feature_version": FEATURE_VERSION,
+        "as_of_time": as_of_time,
+        "universe_snapshot_id": resolved_universe_id,
+        "previous_target_days": 365,
+        "previous_tolerance_days": 75,
+    });
+    let feature_snapshot_id = stable_id(
+        "feat",
+        json!({
+            "name": name,
+            "as_of_time": as_of_time,
+            "feature_version": FEATURE_VERSION,
+            "universe_snapshot_id": resolved_universe_id,
+            "input_statement_hash": input_statement_hash,
+        }),
+    );
+
+    let tx = conn.transaction()?;
+    let created_at = utc_now();
+    let snapshot_inserted = tx.execute(
+        "INSERT OR IGNORE INTO feature_snapshots(feature_snapshot_id, name, universe_snapshot_id, as_of_time, feature_version, input_statement_hash, security_count, rule_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            feature_snapshot_id,
+            name,
+            resolved_universe_id,
+            as_of_time,
+            FEATURE_VERSION,
+            input_statement_hash,
+            rows.len() as i64,
+            canonical_json(&rule),
+            created_at,
+        ],
+    )?;
+    let mut rows_inserted = 0usize;
+    for row in &rows {
+        let changed = tx.execute(
+            "INSERT OR IGNORE INTO feature_rows(feature_snapshot_id, security_id, symbol, peer_group, sector, industry, period_end_date, available_at, revenue_ttm_usd, revenue_growth_yoy_ratio, net_margin_ratio, operating_cash_flow_ttm_usd, capex_ttm_usd, free_cash_flow_ttm_usd, fcf_margin_ratio, cash_usd, debt_usd, net_debt_usd, net_debt_to_revenue_ratio, diluted_shares, statement_quality_flags, feature_quality_flags, source_statement_snapshot_id, previous_statement_snapshot_id, row_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                feature_snapshot_id,
+                row.security_id,
+                row.symbol.as_str(),
+                row.peer_group.as_str(),
+                row.sector.as_str(),
+                row.industry.as_str(),
+                row.period_end_date.as_str(),
+                row.available_at.as_str(),
+                row.revenue_ttm_usd,
+                row.revenue_growth_yoy_ratio,
+                row.net_margin_ratio,
+                row.operating_cash_flow_ttm_usd,
+                row.capex_ttm_usd,
+                row.free_cash_flow_ttm_usd,
+                row.fcf_margin_ratio,
+                row.cash_usd,
+                row.debt_usd,
+                row.net_debt_usd,
+                row.net_debt_to_revenue_ratio,
+                row.diluted_shares,
+                row.statement_quality_flags,
+                row.feature_quality_flags,
+                row.source_statement_snapshot_id.as_str(),
+                row.previous_statement_snapshot_id.as_deref(),
+                row.row_hash.as_str(),
+                utc_now(),
+            ],
+        )?;
+        rows_inserted += changed;
+    }
+    let flagged_count = rows
+        .iter()
+        .filter(|row| row.feature_quality_flags != 0 || row.statement_quality_flags != 0)
+        .count();
+    let event = append_event(
+        &tx,
+        "feature_snapshot_created",
+        json!({
+            "feature_snapshot_id": feature_snapshot_id,
+            "name": name,
+            "as_of_time": as_of_time,
+            "feature_version": FEATURE_VERSION,
+            "universe_snapshot_id": resolved_universe_id,
+            "input_statement_hash": input_statement_hash,
+            "security_count": rows.len(),
+            "snapshot_inserted": snapshot_inserted,
+            "rows_inserted": rows_inserted,
+            "flagged_count": flagged_count,
+            "rule": rule,
+        }),
+    )?;
+    tx.commit()?;
+    Ok(event)
+}
+
+fn cmd_feat(
+    db_path: &Path,
+    name: &str,
+    as_of: &str,
+    universe_snapshot_id: Option<&str>,
+    universe_name: &str,
+) -> Result<()> {
+    json_line(&op_feat(
+        db_path,
+        name,
+        as_of,
+        universe_snapshot_id,
+        universe_name,
+    )?)
+}
+
+fn normalize_as_of_time(value: &str) -> Result<String> {
+    if value == "now" {
+        return Ok(utc_now());
+    }
+    let epoch = epoch_second(value);
+    if epoch <= 0 {
+        return fail(
+            2,
+            "--as-of must be `now`, an RFC3339 timestamp, or YYYY-MM-DD",
+        );
+    }
+    Ok(utc_from_epoch_second(epoch))
+}
+
+fn resolve_feature_universe_snapshot(
+    conn: &Connection,
+    universe_snapshot_id: Option<&str>,
+    universe_name: &str,
+) -> Result<Option<String>> {
+    if universe_snapshot_id.is_some() && !universe_name.trim().is_empty() {
+        return fail(
+            2,
+            "use either --universe-snapshot-id or --universe-name, not both",
+        );
+    }
+    if let Some(snapshot_id) = universe_snapshot_id.filter(|s| !s.trim().is_empty()) {
+        let found = conn
+            .query_row(
+                "SELECT snapshot_id FROM universe_snapshots WHERE snapshot_id=?",
+                [snapshot_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        return match found {
+            Some(value) => Ok(Some(value)),
+            None => fail(1, format!("universe snapshot not found: {snapshot_id}")),
+        };
+    }
+    if universe_name.trim().is_empty() {
+        return Ok(None);
+    }
+    let found = conn
+        .query_row(
+            "SELECT snapshot_id FROM universe_snapshots WHERE name=? ORDER BY created_at DESC, snapshot_id DESC LIMIT 1",
+            [universe_name],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    match found {
+        Some(value) => Ok(Some(value)),
+        None => fail(1, format!("universe name not found: {universe_name}")),
+    }
+}
+
+fn load_latest_feature_sources(
+    conn: &Connection,
+    as_of_time: &str,
+    universe_snapshot_id: Option<&str>,
+) -> Result<Vec<FeatureLatestSource>> {
+    let sql = if universe_snapshot_id.is_some() {
+        "WITH ranked AS (
+           SELECT ss.snapshot_id, ss.security_id, s.symbol,
+                  COALESCE(NULLIF(s.peer_group, ''), 'unclassified') AS peer_group,
+                  COALESCE(NULLIF(s.sector, ''), 'unclassified') AS sector,
+                  COALESCE(NULLIF(s.industry, ''), 'unclassified') AS industry,
+                  ss.period_end_date, ss.available_at, ss.revenue_usd, ss.net_income_usd,
+                  ss.diluted_shares, ss.operating_cash_flow_usd, ss.capex_usd,
+                  ss.free_cash_flow_usd, ss.cash_usd, ss.debt_usd, ss.net_debt_usd,
+                  ss.quality_flags, ss.source_hash,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY ss.security_id
+                    ORDER BY ss.period_end_date DESC, ss.available_at DESC, ss.inserted_at DESC, ss.snapshot_id DESC
+                  ) AS rn
+             FROM statement_snapshots ss
+             JOIN securities s ON s.security_id = ss.security_id
+             JOIN universe_members um ON um.security_id = ss.security_id AND um.snapshot_id = ?
+            WHERE s.investable = 1 AND ss.is_ttm = 1 AND ss.available_at <= ?
+         )
+         SELECT snapshot_id, security_id, symbol, peer_group, sector, industry,
+                period_end_date, available_at, revenue_usd, net_income_usd, diluted_shares,
+                operating_cash_flow_usd, capex_usd, free_cash_flow_usd, cash_usd, debt_usd,
+                net_debt_usd, quality_flags, source_hash
+           FROM ranked WHERE rn = 1 ORDER BY security_id"
+    } else {
+        "WITH ranked AS (
+           SELECT ss.snapshot_id, ss.security_id, s.symbol,
+                  COALESCE(NULLIF(s.peer_group, ''), 'unclassified') AS peer_group,
+                  COALESCE(NULLIF(s.sector, ''), 'unclassified') AS sector,
+                  COALESCE(NULLIF(s.industry, ''), 'unclassified') AS industry,
+                  ss.period_end_date, ss.available_at, ss.revenue_usd, ss.net_income_usd,
+                  ss.diluted_shares, ss.operating_cash_flow_usd, ss.capex_usd,
+                  ss.free_cash_flow_usd, ss.cash_usd, ss.debt_usd, ss.net_debt_usd,
+                  ss.quality_flags, ss.source_hash,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY ss.security_id
+                    ORDER BY ss.period_end_date DESC, ss.available_at DESC, ss.inserted_at DESC, ss.snapshot_id DESC
+                  ) AS rn
+             FROM statement_snapshots ss
+             JOIN securities s ON s.security_id = ss.security_id
+            WHERE s.investable = 1 AND ss.is_ttm = 1 AND ss.available_at <= ?
+         )
+         SELECT snapshot_id, security_id, symbol, peer_group, sector, industry,
+                period_end_date, available_at, revenue_usd, net_income_usd, diluted_shares,
+                operating_cash_flow_usd, capex_usd, free_cash_flow_usd, cash_usd, debt_usd,
+                net_debt_usd, quality_flags, source_hash
+           FROM ranked WHERE rn = 1 ORDER BY security_id"
+    };
+
+    let mut stmt = conn.prepare(sql)?;
+    let mapper = |row: &rusqlite::Row<'_>| -> rusqlite::Result<FeatureLatestSource> {
+        Ok(FeatureLatestSource {
+            statement: feature_statement_from_row(row, 0)?,
+            symbol: row.get(2)?,
+            peer_group: row.get(3)?,
+            sector: row.get(4)?,
+            industry: row.get(5)?,
+        })
+    };
+    let rows = if let Some(snapshot_id) = universe_snapshot_id {
+        stmt.query_map(params![snapshot_id, as_of_time], mapper)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    } else {
+        stmt.query_map(params![as_of_time], mapper)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    Ok(rows)
+}
+
+fn load_previous_feature_source(
+    conn: &Connection,
+    security_id: i64,
+    as_of_time: &str,
+    latest_period_end_date: &str,
+) -> Result<Option<FeatureStatementSource>> {
+    conn.query_row(
+        "SELECT snapshot_id, security_id, period_end_date, available_at, revenue_usd, net_income_usd,
+                diluted_shares, operating_cash_flow_usd, capex_usd, free_cash_flow_usd, cash_usd,
+                debt_usd, net_debt_usd, quality_flags, source_hash
+           FROM statement_snapshots
+          WHERE security_id = ? AND is_ttm = 1 AND available_at <= ? AND period_end_date < ?
+          ORDER BY
+                CASE WHEN ABS((julianday(?) - julianday(period_end_date)) - 365.0) <= 75.0 THEN 0 ELSE 1 END,
+                ABS((julianday(?) - julianday(period_end_date)) - 365.0),
+                period_end_date DESC, available_at DESC, inserted_at DESC, snapshot_id DESC
+          LIMIT 1",
+        params![
+            security_id,
+            as_of_time,
+            latest_period_end_date,
+            latest_period_end_date,
+            latest_period_end_date,
+        ],
+        feature_statement_from_statement_row,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn feature_statement_from_statement_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<FeatureStatementSource> {
+    Ok(FeatureStatementSource {
+        snapshot_id: row.get(0)?,
+        security_id: row.get(1)?,
+        period_end_date: row.get(2)?,
+        available_at: row.get(3)?,
+        revenue_usd: row.get(4)?,
+        net_income_usd: row.get(5)?,
+        diluted_shares: row.get(6)?,
+        operating_cash_flow_usd: row.get(7)?,
+        capex_usd: row.get(8)?,
+        free_cash_flow_usd: row.get(9)?,
+        cash_usd: row.get(10)?,
+        debt_usd: row.get(11)?,
+        net_debt_usd: row.get(12)?,
+        quality_flags: row.get(13)?,
+        source_hash: row.get(14)?,
+    })
+}
+
+fn feature_statement_from_row(
+    row: &rusqlite::Row<'_>,
+    offset: usize,
+) -> rusqlite::Result<FeatureStatementSource> {
+    Ok(FeatureStatementSource {
+        snapshot_id: row.get(offset)?,
+        security_id: row.get(offset + 1)?,
+        period_end_date: row.get(offset + 6)?,
+        available_at: row.get(offset + 7)?,
+        revenue_usd: row.get(offset + 8)?,
+        net_income_usd: row.get(offset + 9)?,
+        diluted_shares: row.get(offset + 10)?,
+        operating_cash_flow_usd: row.get(offset + 11)?,
+        capex_usd: row.get(offset + 12)?,
+        free_cash_flow_usd: row.get(offset + 13)?,
+        cash_usd: row.get(offset + 14)?,
+        debt_usd: row.get(offset + 15)?,
+        net_debt_usd: row.get(offset + 16)?,
+        quality_flags: row.get(offset + 17)?,
+        source_hash: row.get(offset + 18)?,
+    })
+}
+
+fn build_feature_row(
+    latest: FeatureLatestSource,
+    previous: Option<FeatureStatementSource>,
+) -> FeatureRow {
+    let latest_statement = latest.statement;
+    let previous_ref = previous.as_ref();
+    let previous_is_comparable = previous_ref
+        .map(|prior| {
+            let day_delta =
+                epoch_day(&latest_statement.period_end_date) - epoch_day(&prior.period_end_date);
+            (290..=440).contains(&day_delta)
+        })
+        .unwrap_or(false);
+    let mut feature_quality_flags = 0i64;
+    if previous_ref.is_none() {
+        feature_quality_flags |= FEATURE_MISSING_PREVIOUS;
+    } else if !previous_is_comparable {
+        feature_quality_flags |= FEATURE_NON_COMPARABLE_PREVIOUS;
+    }
+    if latest_statement.revenue_usd <= 0.0 || !latest_statement.revenue_usd.is_finite() {
+        feature_quality_flags |= FEATURE_MISSING_REVENUE;
+    }
+    if (latest_statement.quality_flags & ((1i64 << 8) | (1i64 << 9))) != 0 {
+        feature_quality_flags |= FEATURE_MISSING_FCF;
+    }
+    if latest_statement.diluted_shares <= 0.0 || !latest_statement.diluted_shares.is_finite() {
+        feature_quality_flags |= FEATURE_MISSING_SHARES;
+    }
+
+    let previous_quality_flags = previous_ref.map(|prior| prior.quality_flags).unwrap_or(0);
+    let statement_quality_flags = latest_statement.quality_flags | previous_quality_flags;
+    if statement_quality_flags != 0 {
+        feature_quality_flags |= FEATURE_STATEMENT_FLAGGED;
+    }
+
+    let revenue_growth_yoy_ratio = match previous_ref {
+        Some(prior)
+            if previous_is_comparable
+                && prior.revenue_usd.is_finite()
+                && prior.revenue_usd.abs() > 1.0 =>
+        {
+            (latest_statement.revenue_usd - prior.revenue_usd) / prior.revenue_usd.abs()
+        }
+        _ => 0.0,
+    };
+    let net_margin_ratio = safe_ratio(
+        latest_statement.net_income_usd,
+        latest_statement.revenue_usd,
+    );
+    let fcf_margin_ratio = safe_ratio(
+        latest_statement.free_cash_flow_usd,
+        latest_statement.revenue_usd,
+    );
+    let net_debt_to_revenue_ratio =
+        safe_ratio(latest_statement.net_debt_usd, latest_statement.revenue_usd);
+    let previous_statement_snapshot_id = previous_ref.map(|prior| prior.snapshot_id.clone());
+    let row_payload = json!({
+        "security_id": latest_statement.security_id,
+        "symbol": latest.symbol.as_str(),
+        "period_end_date": latest_statement.period_end_date.as_str(),
+        "available_at": latest_statement.available_at.as_str(),
+        "revenue_ttm_usd": latest_statement.revenue_usd,
+        "revenue_growth_yoy_ratio": revenue_growth_yoy_ratio,
+        "net_margin_ratio": net_margin_ratio,
+        "operating_cash_flow_ttm_usd": latest_statement.operating_cash_flow_usd,
+        "capex_ttm_usd": latest_statement.capex_usd,
+        "free_cash_flow_ttm_usd": latest_statement.free_cash_flow_usd,
+        "fcf_margin_ratio": fcf_margin_ratio,
+        "cash_usd": latest_statement.cash_usd,
+        "debt_usd": latest_statement.debt_usd,
+        "net_debt_usd": latest_statement.net_debt_usd,
+        "net_debt_to_revenue_ratio": net_debt_to_revenue_ratio,
+        "diluted_shares": latest_statement.diluted_shares,
+        "statement_quality_flags": statement_quality_flags,
+        "feature_quality_flags": feature_quality_flags,
+        "source_statement_snapshot_id": latest_statement.snapshot_id.as_str(),
+        "previous_statement_snapshot_id": previous_statement_snapshot_id.as_deref(),
+    });
+    let row_hash = sha256_hex(canonical_json(&row_payload).as_bytes());
+
+    FeatureRow {
+        security_id: latest_statement.security_id,
+        symbol: latest.symbol,
+        peer_group: latest.peer_group,
+        sector: latest.sector,
+        industry: latest.industry,
+        period_end_date: latest_statement.period_end_date,
+        available_at: latest_statement.available_at,
+        revenue_ttm_usd: latest_statement.revenue_usd,
+        revenue_growth_yoy_ratio,
+        net_margin_ratio,
+        operating_cash_flow_ttm_usd: latest_statement.operating_cash_flow_usd,
+        capex_ttm_usd: latest_statement.capex_usd,
+        free_cash_flow_ttm_usd: latest_statement.free_cash_flow_usd,
+        fcf_margin_ratio,
+        cash_usd: latest_statement.cash_usd,
+        debt_usd: latest_statement.debt_usd,
+        net_debt_usd: latest_statement.net_debt_usd,
+        net_debt_to_revenue_ratio,
+        diluted_shares: latest_statement.diluted_shares,
+        statement_quality_flags,
+        feature_quality_flags,
+        source_statement_snapshot_id: latest_statement.snapshot_id,
+        previous_statement_snapshot_id,
+        row_hash,
+    }
+}
+
+fn safe_ratio(numerator: f64, denominator: f64) -> f64 {
+    if numerator.is_finite() && denominator.is_finite() && denominator.abs() > 1.0 {
+        numerator / denominator
+    } else {
+        0.0
+    }
+}
+
+fn op_gate(args: GateArgs) -> Result<Value> {
     let mut conn = open_db(&args.db)?;
     ensure_db(&conn)?;
     let core = Core::load(&args.core_lib)?;
@@ -2067,11 +2438,15 @@ fn cmd_gate(args: GateArgs) -> Result<()> {
         )?;
         tx.commit()?;
         core.free_gate(&mut out);
-        json_line(&event)
+        Ok(event)
     }
 }
 
-fn cmd_stage(db_path: &Path, run_id: Option<&str>, limit: i64) -> Result<()> {
+fn cmd_gate(args: GateArgs) -> Result<()> {
+    json_line(&op_gate(args)?)
+}
+
+fn op_stage(db_path: &Path, run_id: Option<&str>, limit: i64) -> Result<(Vec<Value>, String)> {
     let mut conn = open_db(db_path)?;
     ensure_db(&conn)?;
     let mode = setting(&conn, "trading_mode");
@@ -2110,6 +2485,7 @@ fn cmd_stage(db_path: &Path, run_id: Option<&str>, limit: i64) -> Result<()> {
     };
     let tx = conn.transaction()?;
     let mut staged = 0usize;
+    let mut events = Vec::new();
     for (decision_id, intent_id, security_id, side, notional) in stage_rows {
         let staged_id = Uuid::new_v4().to_string();
         tx.execute("INSERT INTO staged_orders(staged_order_id, decision_id, intent_id, security_id, side, notional_usd, staged_at) VALUES (?, ?, ?, ?, ?, ?, ?)", params![staged_id, decision_id, intent_id, security_id, side, notional, utc_now()])?;
@@ -2118,20 +2494,28 @@ fn cmd_stage(db_path: &Path, run_id: Option<&str>, limit: i64) -> Result<()> {
             "order_staged",
             json!({"staged_order_id": staged_id, "decision_id": decision_id, "intent_id": intent_id, "security_id": security_id, "side": side, "notional_usd": notional}),
         )?;
-        json_line(&event)?;
+        events.push(event);
         staged += 1;
     }
     tx.commit()?;
-    eprintln!("orders staged={staged}");
+    Ok((events, format!("orders staged={staged}\n")))
+}
+
+fn cmd_stage(db_path: &Path, run_id: Option<&str>, limit: i64) -> Result<()> {
+    let (events, stderr) = op_stage(db_path, run_id, limit)?;
+    for event in events {
+        json_line(&event)?;
+    }
+    eprint!("{stderr}");
     Ok(())
 }
 
-fn cmd_send(
+fn op_send(
     db_path: &Path,
     adapter: &str,
     limit: i64,
     max_reconciliation_age_s: i64,
-) -> Result<()> {
+) -> Result<(Vec<Value>, String)> {
     if adapter != "mock" {
         return fail(3, "only --adapter mock is implemented");
     }
@@ -2153,17 +2537,31 @@ fn cmd_send(
     };
     let tx = conn.transaction()?;
     let mut sent = 0usize;
+    let mut events = Vec::new();
     for (staged_id, security_id, side, notional) in send_rows {
         let event_id = Uuid::new_v4().to_string();
         let mut payload = json!({"adapter": "mock", "staged_order_id": staged_id, "security_id": security_id, "side": side, "notional_usd": notional, "mode": mode.clone()});
         tx.execute("INSERT INTO broker_events(broker_event_id, staged_order_id, event_type, payload_json, occurred_at) VALUES (?, ?, 'mock_order_submitted', ?, ?)", params![event_id, staged_id, canonical_json(&payload), utc_now()])?;
         payload["broker_event_id"] = json!(event_id);
         let event = append_event(&tx, "broker_order_submitted_mock", payload)?;
-        json_line(&event)?;
+        events.push(event);
         sent += 1;
     }
     tx.commit()?;
-    eprintln!("mock broker submissions={sent}");
+    Ok((events, format!("mock broker submissions={sent}\n")))
+}
+
+fn cmd_send(
+    db_path: &Path,
+    adapter: &str,
+    limit: i64,
+    max_reconciliation_age_s: i64,
+) -> Result<()> {
+    let (events, stderr) = op_send(db_path, adapter, limit, max_reconciliation_age_s)?;
+    for event in events {
+        json_line(&event)?;
+    }
+    eprint!("{stderr}");
     Ok(())
 }
 
@@ -2182,17 +2580,22 @@ fn cmd_mode(db_path: &Path, mode: &str) -> Result<()> {
     if !allowed.contains(mode) {
         return fail(3, format!("invalid mode {mode:?}"));
     }
-    set_mode(db_path, mode, "trading_mode_set", json!({"mode": mode}))
+    json_line(&op_set_mode(
+        db_path,
+        mode,
+        "trading_mode_set",
+        json!({"mode": mode}),
+    )?)
 }
 
-fn set_mode(db_path: &Path, mode: &str, event_type: &str, payload: Value) -> Result<()> {
+fn op_set_mode(db_path: &Path, mode: &str, event_type: &str, payload: Value) -> Result<Value> {
     let mut conn = open_db(db_path)?;
     ensure_db(&conn)?;
     let tx = conn.transaction()?;
     tx.execute("INSERT INTO settings(key, value, updated_at) VALUES ('trading_mode', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at", params![mode, utc_now()])?;
     let event = append_event(&tx, event_type, payload)?;
     tx.commit()?;
-    json_line(&event)
+    Ok(event)
 }
 
 fn cmd_stat(db_path: &Path) -> Result<()> {
@@ -2210,6 +2613,8 @@ fn cmd_stat(db_path: &Path) -> Result<()> {
         "universe_members",
         "model_runs",
         "statement_snapshots",
+        "feature_snapshots",
+        "feature_rows",
         "model_assumptions",
         "valuations",
         "forecast_outcomes",
@@ -2248,9 +2653,153 @@ fn cmd_report(db_path: &Path, date: &str) -> Result<()> {
     ] {
         println!("  {table}: {}", count_table(&conn, table));
     }
+    println!("\npeer_groups:");
+    {
+        let mut stmt = conn.prepare(
+            "SELECT coalesce(nullif(peer_group, ''), 'unclassified') AS peer_group, COUNT(*)
+             FROM securities GROUP BY coalesce(nullif(peer_group, ''), 'unclassified')
+             ORDER BY COUNT(*) DESC, peer_group",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (peer_group, count) = row?;
+            println!("  {peer_group}: {count}");
+        }
+    }
+    println!("\ncanonical_metrics:");
+    {
+        let mut stmt = conn.prepare(
+            "SELECT metric_name, COUNT(DISTINCT security_id), COUNT(*)
+             FROM canonical_observations
+             WHERE observation_status IN ('selected','derived')
+             GROUP BY metric_name ORDER BY metric_name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (metric_name, security_count, observation_count) = row?;
+            println!(
+                "  {metric_name}: securities={security_count} observations={observation_count}"
+            );
+        }
+    }
+    println!("\nfeatures:");
+    let latest_feature = conn
+        .query_row(
+            "SELECT feature_snapshot_id, name, as_of_time, feature_version, security_count, input_statement_hash
+               FROM feature_snapshots
+              ORDER BY created_at DESC, as_of_time DESC, feature_snapshot_id DESC
+              LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((snapshot_id, name, as_of_time, version, security_count, input_hash)) =
+        latest_feature
+    {
+        println!(
+            "  latest: id={snapshot_id} name={name} as_of={as_of_time} version={version} securities={security_count} input_hash={input_hash}"
+        );
+        let quality = conn.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN feature_quality_flags != 0 THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN (feature_quality_flags & 1) != 0 THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN (feature_quality_flags & 2) != 0 THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN (feature_quality_flags & 4) != 0 THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN (feature_quality_flags & 8) != 0 THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN (feature_quality_flags & 16) != 0 THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN (feature_quality_flags & 32) != 0 THEN 1 ELSE 0 END), 0)
+               FROM feature_rows WHERE feature_snapshot_id=?",
+            [snapshot_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                ))
+            },
+        )?;
+        println!("  rows: {}", quality.0);
+        println!("  flagged: {}", quality.1);
+        println!("  missing_previous: {}", quality.2);
+        println!("  non_comparable_previous: {}", quality.3);
+        println!("  missing_revenue: {}", quality.4);
+        println!("  missing_fcf: {}", quality.5);
+        println!("  missing_shares: {}", quality.6);
+        println!("  statement_flagged: {}", quality.7);
+        let mut stmt = conn.prepare(
+            "SELECT symbol, peer_group, period_end_date, revenue_ttm_usd, revenue_growth_yoy_ratio,
+                    net_margin_ratio, free_cash_flow_ttm_usd, net_debt_to_revenue_ratio,
+                    feature_quality_flags
+               FROM feature_rows
+              WHERE feature_snapshot_id=?
+              ORDER BY peer_group, symbol
+              LIMIT 10",
+        )?;
+        let rows = stmt.query_map([snapshot_id.as_str()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, f64>(4)?,
+                row.get::<_, f64>(5)?,
+                row.get::<_, f64>(6)?,
+                row.get::<_, f64>(7)?,
+                row.get::<_, i64>(8)?,
+            ))
+        })?;
+        for row in rows {
+            let (
+                symbol,
+                peer_group,
+                period_end,
+                revenue,
+                revenue_growth,
+                net_margin,
+                fcf,
+                leverage,
+                flags,
+            ) = row?;
+            println!(
+                "  row: {symbol} peer={peer_group} period_end={period_end} revenue_ttm_usd={:.0} revenue_yoy={:.2}% net_margin={:.2}% fcf_usd={:.0} net_debt_to_revenue={:.2} flags={}",
+                revenue,
+                revenue_growth * 100.0,
+                net_margin * 100.0,
+                fcf,
+                leverage,
+                feature_quality_flag_names(flags)
+            );
+        }
+    } else {
+        println!("  latest: none");
+    }
     println!("\nmodel/execution:");
     for table in [
         "model_runs",
+        "feature_snapshots",
+        "feature_rows",
         "valuations",
         "order_intents",
         "risk_decisions",
@@ -2258,6 +2807,82 @@ fn cmd_report(db_path: &Path, date: &str) -> Result<()> {
         "broker_events",
     ] {
         println!("  {table}: {}", count_table(&conn, table));
+    }
+    println!("\nstatement_quality:");
+    let quality = conn.query_row(
+        "WITH ranked AS (
+           SELECT ss.*,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY ss.security_id
+                    ORDER BY ss.period_end_date DESC, ss.available_at DESC, ss.inserted_at DESC
+                  ) AS rn
+           FROM statement_snapshots ss
+         ),
+         latest AS (
+           SELECT * FROM ranked WHERE rn = 1
+         )
+         SELECT COUNT(*),
+                COALESCE(SUM(CASE WHEN free_cash_flow_usd != 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN quality_flags != 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN (quality_flags & 256) != 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN (quality_flags & 512) != 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN (quality_flags & 1024) != 0 THEN 1 ELSE 0 END), 0)
+          FROM latest",
+        [],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        },
+    )?;
+    println!("  latest_snapshots: {}", quality.0);
+    println!("  latest_nonzero_fcf: {}", quality.1);
+    println!("  latest_flagged: {}", quality.2);
+    println!("  missing_operating_cash_flow: {}", quality.3);
+    println!("  missing_capex: {}", quality.4);
+    println!("  derived_ttm: {}", quality.5);
+    {
+        let mut stmt = conn.prepare(
+            "WITH ranked AS (
+               SELECT ss.*,
+                      ROW_NUMBER() OVER (
+                        PARTITION BY ss.security_id
+                        ORDER BY ss.period_end_date DESC, ss.available_at DESC, ss.inserted_at DESC
+                      ) AS rn
+               FROM statement_snapshots ss
+             ),
+             latest AS (
+               SELECT * FROM ranked WHERE rn = 1
+             )
+             SELECT s.symbol, latest.period_end_date, latest.quality_flags,
+                    latest.free_cash_flow_usd
+             FROM latest JOIN securities s ON s.security_id = latest.security_id
+             WHERE latest.quality_flags != 0
+             ORDER BY latest.period_end_date DESC, s.symbol
+             LIMIT 10",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (symbol, period_end, flags, fcf) = row?;
+            println!(
+                "  flagged: {symbol} period_end={period_end} fcf_usd={:.0} flags={} names={}",
+                fcf,
+                flags,
+                statement_quality_flag_names(flags as u32)
+            );
+        }
     }
     Ok(())
 }
@@ -2290,87 +2915,391 @@ fn cmd_ping(
     fail(1, format!("unsupported notify method {method:?}"))
 }
 
-fn cmd_graph(command: GraphCommand) -> Result<()> {
-    match command {
-        GraphCommand::Validate { db, spec } => {
-            let conn = open_db(&db)?;
-            ensure_db(&conn)?;
-            let parsed = framework::graph::load_workflow_spec(&spec)?;
-            let (report, valid) = framework::graph::validate_workflow(&conn, parsed)?;
-            json_line(&report)?;
-            if valid.is_none() {
-                return fail(3, "workflow rejected");
-            }
-            Ok(())
-        }
-        GraphCommand::Run { db, spec } => {
-            let mut conn = open_db(&db)?;
-            ensure_db(&conn)?;
-            let parsed = framework::graph::load_workflow_spec(&spec)?;
-            let (report, valid) = framework::graph::validate_workflow(&conn, parsed)?;
-            json_line(&report)?;
-            let Some(validated) = valid else {
-                return fail(3, "workflow rejected");
-            };
-            framework::executor::run_validated_workflow(&mut conn, &db, validated)?;
-            Ok(())
-        }
-        GraphCommand::Explain { db, spec } => {
-            let conn = open_db(&db)?;
-            ensure_db(&conn)?;
-            let parsed = framework::graph::load_workflow_spec(&spec)?;
-            let (report, valid) = framework::graph::validate_workflow(&conn, parsed)?;
-            let Some(validated) = valid else {
-                json_line(&report)?;
-                return fail(3, "workflow rejected");
-            };
-            let mut nodes = Vec::<Value>::new();
-            for node_id in &validated.order {
-                let node = framework::graph::node_by_id(&validated.parsed.spec, node_id)
-                    .ok_or_else(|| anyhow!("validated node {node_id} missing"))?;
-                let algorithm = framework::registry::load_algorithm(&conn, &node.algorithm)?
-                    .ok_or_else(|| anyhow!("algorithm {} missing", node.algorithm))?;
-                nodes.push(json!({
-                    "node_id": node.node_id,
-                    "algorithm_id": algorithm.algorithm_id,
-                    "cell_id": framework::graph::cell_id(node)?,
-                    "resources": algorithm.resources,
-                    "outputs": node.outputs,
-                }));
-            }
-            json_line(&json!({
-                "event": "workflow_explained",
-                "workflow_name": validated.parsed.spec.workflow_name,
-                "workflow_spec_sha256": validated.parsed.spec_sha256,
-                "topological_order": validated.order,
-                "edge_count": validated.edges.len(),
-                "nodes": nodes
-            }))
+fn op_fixture_seed_portfolio(db_path: &Path) -> Result<Value> {
+    let mut conn = open_db(db_path)?;
+    ensure_db(&conn)?;
+    let tx = conn.transaction()?;
+    tx.execute(
+        "INSERT INTO securities(security_id, cik, symbol, investable, price_usd, adv_usd, updated_at)
+         VALUES
+           (1, '0000000001', 'AAA', 1, 10, 10000000, ?),
+           (2, '0000000002', 'BBB', 1, 100, 10000000, ?),
+           (3, '0000000003', 'CCC', 0, 25, 1000000, ?)
+         ON CONFLICT(security_id) DO UPDATE SET
+           cik=excluded.cik,
+           symbol=excluded.symbol,
+           investable=excluded.investable,
+           price_usd=excluded.price_usd,
+           adv_usd=excluded.adv_usd,
+           updated_at=excluded.updated_at",
+        params![utc_now(), utc_now(), utc_now()],
+    )?;
+    tx.execute(
+        "INSERT INTO positions(security_id, quantity_shares, market_value_usd, weight_ratio, updated_at)
+         VALUES (1, 0, 0, 0, ?)
+         ON CONFLICT(security_id) DO UPDATE SET
+           quantity_shares=excluded.quantity_shares,
+           market_value_usd=excluded.market_value_usd,
+           weight_ratio=excluded.weight_ratio,
+           updated_at=excluded.updated_at",
+        params![utc_now()],
+    )?;
+    let event = append_event(
+        &tx,
+        "fixture_portfolio_seeded",
+        json!({"securities": 3, "positions": 1}),
+    )?;
+    tx.commit()?;
+    Ok(event)
+}
+
+fn op_fixture_seed_model_observations(db_path: &Path, sql_path: &Path) -> Result<Value> {
+    let mut conn = open_db(db_path)?;
+    ensure_db(&conn)?;
+    let before_observations = count_table(&conn, "canonical_observations");
+    let sql = fs::read_to_string(sql_path)
+        .with_context(|| format!("reading fixture sql {}", sql_path.display()))?;
+    let tx = conn.transaction()?;
+    tx.execute_batch(&sql)?;
+    let after_observations: i64 =
+        tx.query_row("SELECT COUNT(*) FROM canonical_observations", [], |row| {
+            row.get(0)
+        })?;
+    let event = append_event(
+        &tx,
+        "fixture_model_observations_seeded",
+        json!({
+            "sql_path": sql_path,
+            "canonical_observations_before": before_observations,
+            "canonical_observations_after": after_observations,
+            "canonical_observations_inserted_or_present": after_observations.saturating_sub(before_observations)
+        }),
+    )?;
+    tx.commit()?;
+    Ok(event)
+}
+
+fn op_fixture_ingest_sec_package(db_path: &Path, config: &Value) -> Result<(Vec<Value>, String)> {
+    let accession = graph_required_string(config, "accession")?;
+    let cik = normalize_cik(&graph_required_string(config, "cik")?);
+    let form = graph_required_string(config, "form")?;
+    let filing_date = graph_required_string(config, "filing_date")?;
+    let accepted_at = graph_required_string(config, "accepted_at")?;
+    let primary_document = graph_required_string(config, "primary_document")?;
+    let source_url = graph_optional_string(config, "source_url")
+        .unwrap_or_else(|| "fixture://sec-package/index.json".to_string());
+    let package_root = PathBuf::from(graph_required_string(config, "package_root")?);
+    let raw_root = graph_optional_string(config, "raw_root")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            db_path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."))
+                .join("raw")
+        });
+
+    let filing_event = {
+        let mut conn = open_db(db_path)?;
+        ensure_db(&conn)?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO filings(accession_number, cik, form, filing_date, accepted_at, primary_document, source_url, ingested_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(accession_number) DO UPDATE SET
+               cik=excluded.cik,
+               form=excluded.form,
+               filing_date=excluded.filing_date,
+               accepted_at=excluded.accepted_at,
+               primary_document=excluded.primary_document,
+               source_url=excluded.source_url,
+               ingested_at=excluded.ingested_at",
+            params![
+                accession.as_str(),
+                cik.as_str(),
+                form.as_str(),
+                filing_date.as_str(),
+                accepted_at.as_str(),
+                primary_document.as_str(),
+                source_url.as_str(),
+                utc_now()
+            ],
+        )?;
+        let event = append_event(
+            &tx,
+            "fixture_filing_seeded",
+            json!({"accession_number": accession.clone(), "cik": cik.clone(), "form": form.clone()}),
+        )?;
+        tx.commit()?;
+        event
+    };
+
+    let (xbrl_event, stderr) = op_xbrl(
+        db_path,
+        Some(accession),
+        Some(cik),
+        Some(form),
+        Some(filing_date),
+        Some(accepted_at),
+        raw_root,
+        Some(package_root),
+        false,
+        String::new(),
+    )?;
+    Ok((vec![filing_event, xbrl_event], stderr))
+}
+
+pub(crate) fn run_graph_algorithm_command(
+    db_path: &Path,
+    node: &framework::graph::NodeSpec,
+    algorithm: &framework::registry::Algorithm,
+    inherited_run_id: Option<&str>,
+) -> Result<framework::executor::CommandResult> {
+    match run_graph_algorithm_command_inner(db_path, node, algorithm, inherited_run_id) {
+        Ok(result) => Ok(result),
+        Err(err) => {
+            let exit_code = err.downcast_ref::<ExitError>().map(|e| e.code).unwrap_or(1);
+            Ok(framework::executor::CommandResult {
+                stdout: String::new(),
+                stderr: format!("error: {err:#}\n"),
+                exit_code,
+            })
         }
     }
 }
 
-fn cmd_product(command: ProductCommand) -> Result<()> {
-    match command {
-        ProductCommand::Show { db, product_id } => {
-            let conn = open_db(&db)?;
-            ensure_db(&conn)?;
-            framework::storage::print_product(&conn, &product_id)
+fn run_graph_algorithm_command_inner(
+    db_path: &Path,
+    node: &framework::graph::NodeSpec,
+    algorithm: &framework::registry::Algorithm,
+    inherited_run_id: Option<&str>,
+) -> Result<framework::executor::CommandResult> {
+    let config = &node.config;
+    match algorithm.algorithm_id.as_str() {
+        "fixture.seed_portfolio.v1" => event_command_result(op_fixture_seed_portfolio(db_path)?),
+        "fixture.ingest_sec_package.v1" => {
+            events_command_result(op_fixture_ingest_sec_package(db_path, config)?)
         }
-        ProductCommand::Lineage { db, product_id } => {
-            let conn = open_db(&db)?;
-            ensure_db(&conn)?;
-            framework::storage::print_lineage(&conn, &product_id)
+        "fixture.seed_model_observations.v1" => {
+            event_command_result(op_fixture_seed_model_observations(
+                db_path,
+                &PathBuf::from(graph_required_string(config, "sql_path")?),
+            )?)
         }
+        "fixture.set_mode.v1" => event_command_result(op_set_mode(
+            db_path,
+            &graph_required_string(config, "mode")?,
+            "fixture_trading_mode_set",
+            json!({"mode": graph_required_string(config, "mode")?}),
+        )?),
+        "cmd.recon.v1" => event_command_result(op_recon(
+            db_path,
+            graph_required_f64(config, "portfolio_value_usd")?,
+            graph_required_f64(config, "cash_usd")?,
+            config
+                .get("reconciled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )?),
+        "cmd.plan.v1" => event_command_result(op_plan(graph_model_args(db_path, config)?)?),
+        "cmd.value.v1" => event_command_result(op_value(graph_model_args(db_path, config)?)?),
+        "cmd.feat.v1" => event_command_result(op_feat(
+            db_path,
+            &graph_required_string(config, "name")?,
+            &graph_required_string(config, "as_of")?,
+            graph_optional_string(config, "universe_snapshot_id").as_deref(),
+            graph_optional_string(config, "universe_name")
+                .as_deref()
+                .unwrap_or(""),
+        )?),
+        "cmd.gate.v1" => {
+            let run_id = inherited_run_id
+                .or_else(|| config.get("run_id").and_then(Value::as_str))
+                .ok_or_else(|| anyhow!("cmd.gate.v1 requires resolved run_id"))?;
+            event_command_result(op_gate(GateArgs {
+                db: db_path.to_path_buf(),
+                core_lib: graph_required_string(config, "core_lib")?,
+                run_id: Some(run_id.to_string()),
+                portfolio_value_usd: graph_required_f64(config, "portfolio_value_usd")?,
+                cash_usd: graph_required_f64(config, "cash_usd")?,
+                max_name_weight_ratio: graph_required_f64(config, "max_name_weight_ratio")?,
+                max_order_notional_usd: graph_required_f64(config, "max_order_notional_usd")?,
+                min_adv_usd: graph_required_f64(config, "min_adv_usd")?,
+                max_adv_participation_ratio: graph_required_f64(
+                    config,
+                    "max_adv_participation_ratio",
+                )?,
+                max_reconciliation_age_s: graph_required_i64(config, "max_reconciliation_age_s")?,
+            })?)
+        }
+        "cmd.stage.v1" => {
+            let run_id = inherited_run_id
+                .or_else(|| config.get("run_id").and_then(Value::as_str))
+                .ok_or_else(|| anyhow!("cmd.stage.v1 requires resolved run_id"))?;
+            events_command_result(op_stage(db_path, Some(run_id), 100)?)
+        }
+        "cmd.send.mock.v1" => events_command_result(op_send(
+            db_path,
+            "mock",
+            100,
+            graph_required_i64(config, "max_reconciliation_age_s")?,
+        )?),
+        "cmd.report.daily.v1" => Ok(framework::executor::CommandResult {
+            stdout: graph_report_text(
+                db_path,
+                config
+                    .get("date")
+                    .and_then(Value::as_str)
+                    .unwrap_or("today"),
+            )?,
+            stderr: String::new(),
+            exit_code: 0,
+        }),
+        _ => bail!(
+            "no internal graph operation for algorithm {}",
+            algorithm.algorithm_id
+        ),
     }
 }
 
-fn cmd_replay(db_path: &Path, workflow_run_id: &str) -> Result<()> {
+fn event_command_result(event: Value) -> Result<framework::executor::CommandResult> {
+    events_command_result((vec![event], String::new()))
+}
+
+fn events_command_result(
+    result: (Vec<Value>, String),
+) -> Result<framework::executor::CommandResult> {
+    let (events, stderr) = result;
+    let mut stdout = String::new();
+    for event in events {
+        stdout.push_str(&serde_json::to_string(&event)?);
+        stdout.push('\n');
+    }
+    Ok(framework::executor::CommandResult {
+        stdout,
+        stderr,
+        exit_code: 0,
+    })
+}
+
+fn graph_model_args(db_path: &Path, config: &Value) -> Result<ModelArgs> {
+    Ok(ModelArgs {
+        db: db_path.to_path_buf(),
+        core_lib: graph_required_string(config, "core_lib")?,
+        portfolio_value_usd: graph_required_f64(config, "portfolio_value_usd")?,
+        cash_usd: graph_required_f64(config, "cash_usd")?,
+        max_name_weight_ratio: graph_required_f64(config, "max_name_weight_ratio")?,
+        target_gross_exposure_ratio: graph_required_f64(config, "target_gross_exposure_ratio")?,
+        min_expected_return_proxy: config
+            .get("min_expected_return_proxy")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.05),
+        min_abs_order_notional_usd: config
+            .get("min_abs_order_notional_usd")
+            .and_then(Value::as_f64)
+            .unwrap_or(100.0),
+        max_forecast_abs_growth_ratio: config
+            .get("max_forecast_abs_growth_ratio")
+            .and_then(Value::as_f64)
+            .unwrap_or(2.0),
+        max_fact_age_days: config
+            .get("max_fact_age_days")
+            .and_then(Value::as_f64)
+            .unwrap_or(540.0),
+        max_statement_age_days: config
+            .get("max_statement_age_days")
+            .and_then(Value::as_f64)
+            .unwrap_or(540.0),
+        max_order_notional_usd: graph_required_f64(config, "max_order_notional_usd")?,
+        min_adv_usd: graph_required_f64(config, "min_adv_usd")?,
+        max_adv_participation_ratio: graph_required_f64(config, "max_adv_participation_ratio")?,
+        max_reconciliation_age_s: graph_required_i64(config, "max_reconciliation_age_s")?,
+        forecast_horizon_days: config
+            .get("forecast_horizon_days")
+            .and_then(Value::as_i64)
+            .unwrap_or(90),
+        operator_label: graph_optional_string(config, "operator_label")
+            .unwrap_or_else(|| "default".to_string()),
+        assumption_json: String::new(),
+        assumption_file: String::new(),
+        assumption_set_id: graph_optional_string(config, "assumption_set_id").unwrap_or_default(),
+    })
+}
+
+fn graph_report_text(db_path: &Path, date: &str) -> Result<String> {
     let conn = open_db(db_path)?;
     ensure_db(&conn)?;
-    let result = framework::replay::replay_workflow(&conn, workflow_run_id)?;
-    println!("{}", framework::canonical_json::to_canonical_json(&result)?);
-    Ok(())
+    let date = if date == "today" {
+        OffsetDateTime::now_utc().date().to_string()
+    } else {
+        date.to_string()
+    };
+    let mut out = String::new();
+    out.push_str(&format!("FA DAILY REPORT - {date} UTC\n\n"));
+    out.push_str("state:\n");
+    out.push_str(&format!(
+        "  trading_mode: {}\n",
+        setting(&conn, "trading_mode")
+    ));
+    out.push_str("\ndata:\n");
+    for table in [
+        "securities",
+        "filings",
+        "source_documents",
+        "xbrl_facts",
+        "canonical_observations",
+    ] {
+        out.push_str(&format!("  {table}: {}\n", count_table(&conn, table)));
+    }
+    out.push_str("\nmodel/execution:\n");
+    for table in [
+        "model_runs",
+        "feature_snapshots",
+        "feature_rows",
+        "valuations",
+        "order_intents",
+        "risk_decisions",
+        "staged_orders",
+        "broker_events",
+    ] {
+        out.push_str(&format!("  {table}: {}\n", count_table(&conn, table)));
+    }
+    Ok(out)
+}
+
+fn graph_required_f64(config: &Value, key: &str) -> Result<f64> {
+    config
+        .get(key)
+        .and_then(Value::as_f64)
+        .ok_or_else(|| anyhow!("missing numeric config.{key}"))
+}
+
+fn graph_required_i64(config: &Value, key: &str) -> Result<i64> {
+    config
+        .get(key)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| anyhow!("missing integer config.{key}"))
+}
+
+fn graph_required_string(config: &Value, key: &str) -> Result<String> {
+    let Some(value) = config.get(key) else {
+        return Err(anyhow!("missing string config.{key}"));
+    };
+    match value {
+        Value::String(value) => Ok(value.clone()),
+        Value::Number(value) => Ok(value.to_string()),
+        Value::Bool(value) => Ok(value.to_string()),
+        _ => Err(anyhow!("missing string config.{key}")),
+    }
+}
+
+fn graph_optional_string(config: &Value, key: &str) -> Option<String> {
+    match config.get(key)? {
+        Value::String(value) if !value.is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn ensure_assumptions(conn: &Connection, operator: &str) -> Result<(String, String)> {
@@ -2513,6 +3442,41 @@ fn concept_candidates() -> Vec<(&'static str, i64, i64, i64, &'static str)> {
         ),
         ("us-gaap:LongTermDebtCurrent", 8, 801, 2, "USD"),
         ("us-gaap:LongTermDebtNoncurrent", 8, 801, 3, "USD"),
+        ("us-gaap:GrossProfit", 9, 901, 1, "USD"),
+        ("us-gaap:OperatingIncomeLoss", 10, 1001, 1, "USD"),
+        ("us-gaap:ResearchAndDevelopmentExpense", 11, 1101, 1, "USD"),
+        ("us-gaap:ShareBasedCompensation", 12, 1201, 1, "USD"),
+        (
+            "us-gaap:AllocatedShareBasedCompensationExpense",
+            12,
+            1202,
+            2,
+            "USD",
+        ),
+        ("us-gaap:InterestExpenseNonoperating", 13, 1301, 1, "USD"),
+        ("us-gaap:InterestExpense", 13, 1302, 2, "USD"),
+        ("us-gaap:InterestExpenseDebt", 13, 1303, 3, "USD"),
+        (
+            "us-gaap:PaymentsForRepurchaseOfCommonStock",
+            14,
+            1401,
+            1,
+            "USD",
+        ),
+        (
+            "us-gaap:StockRepurchasedAndRetiredDuringPeriodValue",
+            14,
+            1402,
+            2,
+            "USD",
+        ),
+        (
+            "us-gaap:StockRepurchasedDuringPeriodValue",
+            14,
+            1403,
+            3,
+            "USD",
+        ),
     ]
 }
 
@@ -2576,8 +3540,87 @@ fn bool_int(value: bool) -> i64 {
         0
     }
 }
+
+fn statement_quality_flag_names(flags: u32) -> String {
+    let known = [
+        (1u32 << 0, "missing_revenue"),
+        (1u32 << 1, "missing_shares"),
+        (1u32 << 2, "missing_cash"),
+        (1u32 << 3, "missing_debt"),
+        (1u32 << 4, "negative_fcf"),
+        (1u32 << 5, "non_comparable_period"),
+        (1u32 << 6, "amended_or_restated"),
+        (1u32 << 7, "low_confidence"),
+        (1u32 << 8, "missing_operating_cash_flow"),
+        (1u32 << 9, "missing_capex"),
+        (1u32 << 10, "derived_ttm"),
+    ];
+    let names = known
+        .iter()
+        .filter_map(|(mask, name)| ((flags & *mask) != 0).then_some(*name))
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(",")
+    }
+}
+
+fn feature_quality_flag_names(flags: i64) -> String {
+    let known = [
+        (FEATURE_MISSING_PREVIOUS, "missing_previous"),
+        (FEATURE_NON_COMPARABLE_PREVIOUS, "non_comparable_previous"),
+        (FEATURE_MISSING_REVENUE, "missing_revenue"),
+        (FEATURE_MISSING_FCF, "missing_fcf"),
+        (FEATURE_MISSING_SHARES, "missing_shares"),
+        (FEATURE_STATEMENT_FLAGGED, "statement_flagged"),
+    ];
+    let names = known
+        .iter()
+        .filter_map(|(mask, name)| ((flags & *mask) != 0).then_some(*name))
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(",")
+    }
+}
+
 fn optional_nonempty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
+}
+
+#[derive(Debug, Clone)]
+struct SecurityPeerMetadata {
+    peer_group: String,
+    sector: String,
+    industry: String,
+}
+
+fn security_peer_metadata(peer_group: &str, sector: &str, industry: &str) -> SecurityPeerMetadata {
+    SecurityPeerMetadata {
+        peer_group: normalized_metadata_value(peer_group).unwrap_or_default(),
+        sector: normalized_metadata_value(sector).unwrap_or_default(),
+        industry: normalized_metadata_value(industry).unwrap_or_default(),
+    }
+}
+
+fn normalized_metadata_value(raw: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut last_underscore = false;
+    for ch in raw.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_underscore = false;
+        } else if !last_underscore && !out.is_empty() {
+            out.push('_');
+            last_underscore = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    Some(out)
 }
 
 fn parse_form_set(forms: &str) -> BTreeSet<String> {
@@ -2737,14 +3780,14 @@ mod tests {
 
     #[test]
     fn filing_ingest_groups_prefer_annual_and_quarterly_history() {
-        let groups = filing_ingest_groups(DEFAULT_FUNDAMENTAL_FORMS, 1, 4, 1);
+        let groups = filing_ingest_groups(DEFAULT_FUNDAMENTAL_FORMS, 4, 12, 1);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].name, "annual");
         assert_eq!(groups[0].forms, "10-K,10-K/A");
-        assert_eq!(groups[0].limit, 1);
+        assert_eq!(groups[0].limit, 4);
         assert_eq!(groups[1].name, "quarterly");
         assert_eq!(groups[1].forms, "10-Q,10-Q/A");
-        assert_eq!(groups[1].limit, 4);
+        assert_eq!(groups[1].limit, 12);
     }
 
     #[test]
@@ -2779,22 +3822,54 @@ mod tests {
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0].price_usd, 110.0);
         assert_eq!(seeds[0].adv_usd, 1600.0);
+        assert_eq!(seeds[0].peer_group, "");
+        assert_eq!(seeds[0].sector, "");
+        assert_eq!(seeds[0].industry, "");
         assert!(seeds[0].investable);
     }
 
+    #[test]
+    fn peer_metadata_uses_explicit_values_only() {
+        let blank = security_peer_metadata("", "", "");
+        assert_eq!(blank.peer_group, "");
+        assert_eq!(blank.sector, "");
+        assert_eq!(blank.industry, "");
+
+        let explicit = security_peer_metadata("Internet Platforms", "Technology", "Digital Ads");
+        assert_eq!(explicit.peer_group, "internet_platforms");
+        assert_eq!(explicit.sector, "technology");
+        assert_eq!(explicit.industry, "digital_ads");
+    }
 
     #[test]
-    fn graph_run_preserves_existing_cli() {
+    fn public_interface_accepts_flow_files_only() {
         use clap::CommandFactory;
 
         let help = Cli::command().render_long_help().to_string();
-        for command in [
-            "init", "sym", "watch", "pull", "xbrl", "univ", "recon", "plan", "value", "gate",
-            "stage", "send", "report", "ping",
-        ] {
-            assert!(help.contains(command), "help missing {command}");
-        }
-        assert!(Cli::try_parse_from(["sec", "init", "--db", ".fa.db"]).is_ok());
+        assert!(help.contains("WORKFLOW.flow"));
+        assert!(help.contains("--validate"));
+        assert!(help.contains("--explain"));
+        assert!(Cli::try_parse_from([
+            "sec",
+            "--db",
+            ".fa.db",
+            "tests/fixtures/workflow_noop.flow"
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "sec",
+            "--db",
+            ".fa.db",
+            "--validate",
+            "tests/fixtures/workflow_noop.flow",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["sec", "init", "--db", ".fa.db"]).is_err());
+    }
+
+    #[test]
+    fn old_verbs_are_not_parseable() {
+        assert!(Cli::try_parse_from(["sec", "init", "--db", ".fa.db"]).is_err());
         assert!(Cli::try_parse_from([
             "sec",
             "graph",
@@ -2802,8 +3877,8 @@ mod tests {
             "--db",
             ".fa.db",
             "--spec",
-            "tests/fixtures/workflow_noop.json",
+            "tests/fixtures/workflow_noop.flow",
         ])
-        .is_ok());
+        .is_err());
     }
 }

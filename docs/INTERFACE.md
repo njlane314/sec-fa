@@ -41,6 +41,11 @@ diagnostics
 
 The Rust `value` command loads canonical observations and persists returned snapshots. It must not construct TTM flows, choose valuation statement anchors, or assign statement-quality flags itself.
 
+The Rust `feat` command consumes persisted statement snapshots and writes
+point-in-time feature snapshots. It may compute ratios and growth fields from
+those statement rows, but it must preserve source snapshot IDs, input hashes, and
+quality flags.
+
 The C++ `fa_build_valuation_plan_v1` entrypoint consumes:
 
 ```text
@@ -95,17 +100,19 @@ Events are JSON payloads stored in the `events` table. They are append-only evid
 Schema contract files live in `docs/contracts/`. They are plain, line-oriented
 contracts; the format is documented in `docs/contracts/FORMAT`.
 
-## 3. Command interface
+## 3. Workflow interface
 
-Commands obey:
+The public Rust executable consumes `.flow` workflow files:
 
 ```text
-stdout = machine-readable result
-stderr = human-readable diagnostics
-exit code = operational status
+sec [--db PATH] [--validate|--explain] WORKFLOW.flow
 ```
 
-Commands that mutate state have names that expose the side effect: `upsert`, `fetch`, `import`, `reconcile`, `stage`, `submit`, `halt`.
+Stdout is JSONL machine-readable workflow evidence, stderr is human-readable
+diagnostics, and the exit code is the operational status. Individual operations
+such as reconciliation, model execution, risk gating, staging, and guarded mock
+submission are internal Rust operations addressed by algorithm ids in the
+workflow graph, not public CLI verbs.
 
 ## 4. Database interface
 

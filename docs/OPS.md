@@ -6,122 +6,71 @@
 make check
 ```
 
-## 2. Initialize database
+## 2. Database
 
-Local development:
+`sec` opens the configured SQLite database and creates or upgrades the schema
+before validating or running a workflow. Local development can still use the
+make target:
 
 ```sh
 make setup-db
 ```
 
-This creates or upgrades `.fa.db`. The direct CLI equivalent is:
+The default database path is `.fa.db`. Use `--db` for an explicit operational
+path:
 
 ```sh
-./sec init
+./sec --db /var/lib/sec/sec.db --validate docs/contracts/workflow.full_analysis.flow
 ```
 
-For an explicit production path:
+The initial trading mode is `observe`.
+
+## 3. Workflow Execution
+
+Operators interact through `.flow` files:
 
 ```sh
-./sec init --db /var/lib/sec/sec.db
+./sec --db /var/lib/sec/sec.db --validate docs/contracts/workflow.full_analysis.flow
+./sec --db /var/lib/sec/sec.db --explain docs/contracts/workflow.full_analysis.flow
+./sec --db /var/lib/sec/sec.db docs/contracts/workflow.full_analysis.flow
 ```
 
-The initial mode is `observe`.
-
-## 3. Add securities
+The full-analysis workflow runs reconciliation, planning, valuation, feature
+materialization, risk gating, and reporting as in-process Rust operations. The
+stage and mock-paper workflows are separate files so crossing from decision
+evidence to staged or submitted orders remains explicit:
 
 ```sh
-./sec sym --db /var/lib/sec/sec.db \
-  --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
+./sec --db /var/lib/sec/sec.db --validate docs/contracts/workflow.stage_orders.flow
+./sec --db /var/lib/sec/sec.db --validate docs/contracts/workflow.paper_mock.flow
 ```
 
-In the starter implementation, `security_id` is the integer CIK. A production security master should add exchange, currency, share class, IBKR contract id, listing status, and corporate-action data.
+## 4. SEC Data
 
-## 4. SEC ingestion
-
-Declare a real User-Agent. The SEC fair-access guidance requires a declared User-Agent and rate moderation.
+SEC ingestion still requires a real User-Agent and rate moderation:
 
 ```sh
 export SEC_USER_AGENT="Your Company admin@example.com"
-
-./sec watch --db /var/lib/sec/sec.db \
-  --cik 0000320193 \
-  --limit 1
-
-./sec pull --db /var/lib/sec/sec.db \
-  --raw-root /var/lib/sec/raw \
-  --cik 0000320193 \
-  --limit 1
 ```
 
-## 5. XBRL package parsing
+The public workflow surface is `.flow`. Ingestion-oriented operations should be
+added to the graph as Rust operations before they are exposed to operators.
+Source artifacts remain immutable under the raw store, and parsed observations
+must stay downstream of filing/source-document evidence.
 
-```sh
-./sec xbrl --db /var/lib/sec/sec.db \
-  --latest \
-  --cik 0000320193 \
-  --raw-root /var/lib/sec/raw
-```
+## 5. Broker Boundary
 
-`watch` records filing metadata from SEC submissions, `pull` reads the SEC accession `index.json` and stores XBRL-relevant package artifacts unchanged, and `xbrl` infers form, filing date, acceptance time, and primary document from the stored filing row. The parser then parses inline-XBRL and classic-XBRL contexts, units, dimensions, and raw facts before invoking the canonical observation resolver. Companyfacts remains a design fallback, but the Rust CLI's primary path is accession XBRL.
+Live broker submission is intentionally not implemented. The current broker path
+is the guarded mock adapter, and workflows with broker resources are rejected
+unless the mode and driver flags explicitly allow them.
 
-## 6. Reconciliation snapshot
+Broker submission must run on an isolated host before live authority is added.
+The submitter must not ingest SEC data, run models, or make discretionary
+decisions, and it must re-check fresh reconciliation immediately before adapter
+submission.
 
-```sh
-./sec recon --db /var/lib/sec/sec.db \
-  --portfolio-value-usd 100000 \
-  --cash-usd 100000 \
-  --reconciled 1
-```
+## 6. Notifications
 
-In production this command should be replaced or backed by an actual broker-state pull from the isolated broker host.
-
-## 7. Model and risk
-
-```sh
-./sec plan --db /var/lib/sec/sec.db \
-  --core-lib /opt/sec/lib/libfolio.so \
-  --portfolio-value-usd 100000 \
-  --cash-usd 100000
-
-./sec gate --db /var/lib/sec/sec.db \
-  --core-lib /opt/sec/lib/libfolio.so
-```
-
-Risk decisions are append-only. Stale reconciliation rejects all intents.
-
-## 8. Staging and submission
-
-```sh
-./sec stage --db /var/lib/sec/sec.db
-```
-
-Live broker submission is intentionally not implemented. The current command supports only guarded mock submission:
-
-```sh
-./sec send --db /var/lib/sec/sec.db --adapter mock
-```
-
-`send` rechecks broker reconciliation freshness immediately before adapter submission. A previously staged order is not sufficient authority if reconciliation has gone stale.
-
-## 9. Reports
-
-```sh
-./sec report daily --db /var/lib/sec/sec.db
-./sec stat --db /var/lib/sec/sec.db
-```
-
-## 10. Notifications
-
-Pushover:
-
-```sh
-PUSHOVER_TOKEN=... PUSHOVER_USER=... \
-  ./sec ping --method pushover --title "Risk alert" --message "Risk gate rejected orders"
-```
-
-ntfy:
-
-```sh
-./sec ping --method ntfy --ntfy-topic your-secret-topic --message "New filing"
-```
+Notifications remain an operation boundary to add to workflows. Supported
+delivery mechanisms are configured by environment variables such as
+`PUSHOVER_TOKEN`, `PUSHOVER_USER`, or an `ntfy` topic.

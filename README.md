@@ -63,8 +63,12 @@ Implemented:
 - Bulk security-master CSV import for issuer-level universes.
 - Batch issuer ingest that discovers, fetches, and parses financial 10-K/10-Q filings only.
 - Databento-backed seed CSV generation for limited explicit stock symbol lists.
+- Security peer metadata for universe analysis (`peer_group`, `sector`, `industry`) from explicit CLI, CSV, or seed data fields.
+- Canonical observations for gross profit, operating income, R&D, stock-based compensation, interest expense, and buybacks.
 - Auditable model assumptions, statement snapshots, valuations, forecast outcomes, and autonomy controls.
 - Product graph infrastructure for typed products, workflow validation, sequential noop execution, lineage, and deterministic replay checks.
+- Immutable point-in-time feature snapshots for revenue growth, margins, free cash flow, leverage, shares, and quality flags.
+- Daily reports that show peer-group counts, canonical metric coverage, feature snapshots, and statement quality flags.
 - SQLite-backed durable daemon workers for SEC discovery, raw pulls, XBRL parsing, planning, risk gating, staging, guarded submission, reconciliation, and notification.
 - CI check script, CMake build, unit test, and schema files.
 - Philosophy, requirements, hazards, coding standard, naming standard, and operations documents.
@@ -85,47 +89,48 @@ make setup-db
 export SEC_USER_AGENT="Your Name your.email@example.com"
 
 DB=.fa.db
-./sec sym --db "$DB" --cik 0000320193 --symbol AAPL --price-usd 200 --adv-usd 5000000000 --investable 1
-./sec watch --db "$DB" --cik 0000320193 --limit 1
-./sec pull --db "$DB" --cik 0000320193 --limit 1
-./sec xbrl --db "$DB" --latest --cik 0000320193
-./sec univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
-./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
-./sec plan --db "$DB" --core-lib build/libfolio.so --portfolio-value-usd 100000 --cash-usd 100000
-./sec gate --db "$DB" --core-lib build/libfolio.so
-./sec report daily --db "$DB"
+./sec --db "$DB" --validate docs/contracts/workflow.full_analysis.flow
+./sec --db "$DB" docs/contracts/workflow.full_analysis.flow
 ```
 
 On macOS the shared library is usually `build/libfolio.dylib`. On Linux it is `build/libfolio.so`.
 
-For database setup only, use `make setup-db`. It creates or upgrades `.fa.db`.
-The equivalent direct CLI command is `./sec init`; pass `--db /path/to/file.db`
-when you need a specific database path.
+For database setup only, use `make setup-db`. Running a workflow also creates or
+upgrades the selected SQLite database path before validation/execution.
 
-For SEC ingestion, `watch` chooses accessions from the official SEC submissions
-feed, `pull` chooses package files from the accession `index.json`, and `xbrl`
-uses the stored filing metadata. A real SEC User-Agent can be supplied once with
-`SEC_USER_AGENT` or per command with `--user-agent`.
+For SEC ingestion, use a real SEC User-Agent via `SEC_USER_AGENT`. Public
+operator workflows are `.flow` files; new ingestion or data-load behavior should
+be added as graph operations rather than new public CLI verbs.
 
 ## Product graph
 
-`sec graph` wraps existing commands with typed products, lineage, and invariant
-checks. The first no-network fixture runs a deterministic noop workflow:
+`sec` runs `.flow` files with typed products, lineage, and invariant checks.
+Graph execution calls in-process Rust operations; it does not spawn `./sec`
+subcommands. The first no-network fixture runs a deterministic noop workflow:
 
 ```sh
 DB=.fa.db
-./sec init --db "$DB"
-./sec graph validate --db "$DB" --spec tests/fixtures/workflow_noop.json
-./sec graph run --db "$DB" --spec tests/fixtures/workflow_noop.json
+./sec --db "$DB" --validate tests/fixtures/workflow_noop.flow
+./sec --db "$DB" tests/fixtures/workflow_noop.flow
 ```
 
-The graph commands print JSONL events. Product inspection and deterministic noop
-replay use the persisted ids:
+Workflow runs print JSONL events and persist product/lineage rows in SQLite.
+Replay and product inspection are internal graph verification capabilities
+rather than public CLI verbs.
+
+The full shadow analysis example wraps the research path without staging or
+broker submission:
 
 ```sh
-./sec product show --db "$DB" --product-id prod_...
-./sec product lineage --db "$DB" --product-id prod_...
-./sec replay --db "$DB" --workflow-run-id wf_...
+./sec --db "$DB" docs/contracts/workflow.full_analysis.flow
+```
+
+Stage and guarded mock-paper graph examples are also available for explicit
+operator-mode runs:
+
+```sh
+./sec --db "$DB" --validate docs/contracts/workflow.stage_orders.flow
+./sec --db "$DB" --validate docs/contracts/workflow.paper_mock.flow
 ```
 
 See `docs/PRODUCT_GRAPH.md` for the schema, invariants, modes, and safety
@@ -137,187 +142,72 @@ The database does not treat `revenue`, `cash`, or `EPS` as primitive scalar valu
 
 The model-input ABI now carries these semantics. The C++ core rejects ambiguous observations and refuses to compare duration facts unless they are fiscal-quarter observations with comparable duration, basis, and dimensional scope. YTD and annual revenue remain stored and auditable, but they are not interchangeable with quarterly revenue.
 
-## Tool names
+## Operation names
 
-The canonical entrypoint is `./sec`. Public commands use single lowercase words with no project prefix:
+The canonical entrypoint is `./sec`, and the public interface is a `.flow` file.
+Workflow nodes reference operation-like algorithm ids for internal graph steps:
 
 ```text
-init
-sym
-import-securities
-ingest-universe
-databento
-pos
-watch
-pull
-xbrl
-univ
+op.recon
+op.plan
+op.value
+op.feat
+op.gate
+op.stage
+op.send.mock
+op.report.daily
+```
+
+The operations compose through the database, immutable raw store, append-only
+ledger, and graph products rather than through textual stdin/stdout filters. A
+normal decision sequence is:
+
+```text
 recon
-plan
-value
-gate
-stage
-send
-report
-ping
-stat
-mode
-halt
+  |
+  +--> plan ----------+
+  |                   v
+  +--> value ------> feat
+                       |
+                       v
+                     gate
+                       |
+              +--------+--------+
+              v                 v
+            report            stage
+                                |
+                                v
+                            send.mock
 ```
 
-The programs compose through the database, immutable raw store, and append-only ledger rather than through textual stdin/stdout filters. A normal operator sequence is:
+`value` runs the valuation path. `feat` materializes immutable feature snapshots
+from the statement snapshots written by `value`.
 
-```text
-+------+
-| init |
-+------+
-   |
-   +--> sym
-   |
-   +--> pos
+## Workflow examples
 
-watch -> pull -> xbrl -> univ
-                           |
-recon ---------------------+
-                           v
-                    plan or value
-                           |
-                           v
-                         gate
-                           |
-                           v
-                         stage
-                           |
-                           v
-                         send
-                           |
-                           v
-                         recon
-                        /     \
-                       v       v
-                    report   ping
-```
-
-`value` runs the valuation path.
-
-## Composition examples
-
-Initialize and seed state:
+Validate the no-network fixture:
 
 ```sh
-DB=.fa.db
-
-make setup-db DB="$DB" &&
-./sec sym --db "$DB" \
-  --cik 0000320193 \
-  --symbol AAPL \
-  --price-usd 200 \
-  --adv-usd 5000000000 \
-  --investable 1 &&
-./sec pos --db "$DB" \
-  --cik 0000320193 \
-  --quantity-shares 0 \
-  --market-value-usd 0 \
-  --weight-ratio 0
+./sec --db .fa.db --validate tests/fixtures/workflow_noop.flow
 ```
 
-Ingest data and build a universe:
+Run research analysis without staging or broker submission:
 
 ```sh
-DB=.fa.db
-RAW=raw
-UA="Your Name your.email@example.com"
-
-./sec watch --db "$DB" --cik 0000320193 --user-agent "$UA" &&
-./sec pull --db "$DB" --raw-root "$RAW" --user-agent "$UA" &&
-./sec xbrl \
-  --db "$DB" \
-  --accession 0000320193-24-000123 \
-  --cik 0000320193 \
-  --symbol AAPL \
-  --raw-root "$RAW" \
-  --user-agent "$UA" &&
-./sec univ --db "$DB" --name us_core --min-adv-usd 0 --min-fact-count 2
+./sec --db .fa.db docs/contracts/workflow.full_analysis.flow
 ```
 
-Scale to a larger issuer universe:
+Validate higher-authority workflows before deliberately running them:
 
 ```sh
-DB=.fa.db
-RAW=raw
-UA="Your Name your.email@example.com"
-
-cat > universe.csv <<'CSV'
-cik,ticker,price_usd,adv_usd,investable
-0000320193,AAPL,200,5000000000,1
-0001045810,NVDA,900,20000000000,1
-0000789019,MSFT,400,7000000000,1
-CSV
-
-./sec import-securities \
-  --db "$DB" \
-  --csv universe.csv &&
-./sec ingest-universe \
-  --db "$DB" \
-  --csv universe.csv \
-  --raw-root "$RAW" \
-  --user-agent "$UA" \
-  --forms 10-K,10-Q,10-K/A,10-Q/A \
-  --annual-limit-per-cik 1 \
-  --quarterly-limit-per-cik 4 \
-  --universe-name us_core \
-  --min-adv-usd 0 \
-  --min-fact-count 2
+./sec --db .fa.db --validate docs/contracts/workflow.stage_orders.flow
+./sec --db .fa.db --validate docs/contracts/workflow.paper_mock.flow
 ```
 
-`ingest-universe` is intentionally issuer-level because the local schema uses CIK as `security_id`. By default it ingests the latest annual 10-K/10-K/A package plus the latest four quarterly 10-Q/10-Q/A packages for each CIK, then parses every fetched accession. This prevents a latest 10-K from crowding out quarterly comparables. If a CSV has several tickers for one CIK, the importer keeps the row with the highest `adv_usd` and records the collapsed count in the event ledger.
-
-Build a security seed CSV from Databento market/reference data:
-
-```sh
-export DATABENTO_API_KEY="..."
-
-./sec databento \
-  --symbols AAPL,MSFT,NVDA \
-  --start 2026-05-01 \
-  --end 2026-05-07 \
-  --out databento_universe.csv
-```
-
-The Databento command calls `security_master.get_last` and `timeseries.get_range` using `EQUS.MINI` / `ohlcv-1d` by default. It writes the same `cik,ticker,price_usd,adv_usd,investable` seed shape accepted by `import-securities` and `ingest-universe`. `adv_usd` is computed as average daily `close * volume` over the requested bar window. The command rejects `ALL_SYMBOLS` by default so accidental broad paid data pulls do not happen.
-
-Research-only run. This stops at risk decisions; it does not stage or submit orders:
-
-```sh
-DB=.fa.db
-LIB=build/libfolio.so
-[ -f "$LIB" ] || LIB=build/libfolio.dylib
-
-./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
-./sec plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
-./sec value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
-./sec gate --db "$DB" --core-lib "$LIB" &&
-./sec report daily --db "$DB"
-```
-
-Shadow/staging run. This crosses from decision to staged action but still does not talk to a broker adapter:
-
-```sh
-./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
-./sec plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 &&
-./sec gate --db "$DB" --core-lib "$LIB" &&
-./sec stage --db "$DB" &&
-./sec report daily --db "$DB"
-```
-
-Guarded mock submission:
-
-```sh
-./sec stage --db "$DB" &&
-./sec send --db "$DB" --adapter mock &&
-./sec recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1 &&
-./sec report daily --db "$DB"
-```
+The issuer/security seed, SEC ingestion, Databento universe, notification, and
+broker-adapter behaviors are operation boundaries. They should be registered in
+the graph and exposed through `.flow` files before becoming public operator
+behavior.
 
 ## Repository map
 

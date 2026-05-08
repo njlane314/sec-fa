@@ -54,6 +54,8 @@ The accession XBRL parser and canonical observation resolver in `filings/` are e
 
 The Rust `value` command is orchestration only for valuation inputs: it loads canonical observations, calls `fa_build_statement_snapshots_v1`, then persists the returned statement snapshots. It must not rebuild TTM flows, choose statement anchors, or assign statement-quality flags in Rust.
 
+The Rust `feat` command is a materialization step over persisted statement snapshots. It may compute ratios, growth, hashes, and feature-quality flags, but it must not invent source accounting values or overwrite prior feature snapshots.
+
 ## 4. Exit-code convention
 
 ```text

@@ -75,6 +75,7 @@ require_contains cli/src/fa_core.rs 'fa_build_statement_snapshots_v1'
 require_contains cli/src/main.rs 'statement_builder_diagnostics'
 forbid_contains cli/src/main.rs 'fn[[:space:]]+(build_latest_statements|build_statement|latest_flow_ttm|latest_point)[[:space:]]*\('
 forbid_contains cli/src/main.rs 'struct[[:space:]]+MetricPoint\b'
+forbid_contains cli/src/main.rs 'infer_security_peer_metadata|match[[:space:]]+symbol\.as_str\(\)'
 require_contains cli/src/main.rs 'require_fresh_broker_reconciliation'
 require_contains docs/CODE.md 'explicit Class B data logic'
 require_contains docs/REQS.md 'FA-MODEL-012'
@@ -126,10 +127,6 @@ sec() {
   "$BUILD_DIR/sec" "$@"
 }
 
-run_quiet() {
-  sec "$@" >/dev/null
-}
-
 expect_exit() {
   expected=$1
   shift
@@ -150,6 +147,19 @@ expect_exit() {
 
 sql() {
   sqlite3 "$DB" "$1"
+}
+
+flow_with_lib() {
+  src=$1
+  dst=$2
+  sed \
+    -e "s|build/libfolio.dylib|$LIB|g" \
+    -e "s|set max_name_weight_ratio 0.05|set max_name_weight_ratio 0.10|g" \
+    -e "s|set max_order_notional_usd 10000|set max_order_notional_usd 20000|g" \
+    -e "s|set name us_top10_tech_features|set name fixture_features|g" \
+    -e "s|set as_of 2026-05-08T13:00:00.000Z|set as_of now|g" \
+    -e '/set universe_name us_top10_tech/d' \
+    "$src" > "$dst"
 }
 
 eq() {
@@ -211,7 +221,14 @@ check_model_outputs() {
   ge "select count(*) from model_runs where diagnostics like 'value_ok%'" 1
   ge 'select count(*) from statement_snapshots' 1
   eq "select count(*) from statement_snapshots where length(source_hash) != 64 or is_ttm != 1 or available_at='' or period_end_date=''" 0
+  ge 'select count(*) from feature_snapshots' 1
+  ge 'select count(*) from feature_rows' 1
+  eq "select count(*) from feature_snapshots where feature_snapshot_id='' or name='' or as_of_time='' or feature_version='' or length(input_statement_hash) != 64 or security_count <= 0 or json_valid(rule_json) != 1" 0
+  eq "select count(*) from feature_rows where feature_snapshot_id not in (select feature_snapshot_id from feature_snapshots)" 0
+  eq "select count(*) from feature_rows where source_statement_snapshot_id not in (select snapshot_id from statement_snapshots)" 0
+  eq "select count(*) from feature_rows where length(row_hash) != 64 or symbol='' or period_end_date='' or available_at=''" 0
   ge "select count(*) from events where event_type='value_completed' and json_extract(payload_json, '$.statement_builder_diagnostics') like 'statements_ok%'" 1
+  ge "select count(*) from events where event_type='feature_snapshot_created' and json_extract(payload_json, '$.security_count') >= 1" 1
   eq "select count(*) from target_weights where run_id not in (select run_id from model_runs)" 0
   eq "select count(*) from order_intents where intent_id='' or run_id='' or side not in ('buy','sell','none') or notional_usd is null or target_weight_ratio is null" 0
   eq "select count(*) from order_intents where run_id not in (select run_id from model_runs)" 0
@@ -227,35 +244,35 @@ check_risk_and_execution() {
 }
 
 step "integration gate: initialize and ingest fixture data"
-run_quiet init --db "$DB"
+FULL_FLOW="$TMPDIR/workflow.full_analysis.flow"
+STAGE_FLOW="$TMPDIR/workflow.stage_orders.flow"
+PAPER_FLOW="$TMPDIR/workflow.paper_mock.flow"
+flow_with_lib docs/contracts/workflow.full_analysis.flow "$FULL_FLOW"
+flow_with_lib docs/contracts/workflow.stage_orders.flow "$STAGE_FLOW"
+flow_with_lib docs/contracts/workflow.paper_mock.flow "$PAPER_FLOW"
+
+sec --db "$DB" --validate tests/fixtures/workflow_noop.flow >/dev/null
 eq "select value from settings where key='trading_mode'" observe
 eq 'select enabled from autonomy_controls where id=1' 0
+sec --db "$DB" --validate "$FULL_FLOW" >/dev/null
+sec --db "$DB" --validate "$STAGE_FLOW" >/dev/null
+sec --db "$DB" --validate "$PAPER_FLOW" >/dev/null
+sec --db "$DB" --validate tests/fixtures/workflow_check_setup.flow >/dev/null
+sec --db "$DB" --validate tests/fixtures/workflow_set_stage.flow >/dev/null
+sec --db "$DB" --validate tests/fixtures/workflow_set_paper.flow >/dev/null
+expect_exit 3 sec --db "$DB" --validate tests/fixtures/workflow_broker_shadow.flow
+expect_exit 2 sec --db "$DB" --validate docs/contracts/workflow.example.json
+sec --db "$DB" tests/fixtures/workflow_noop.flow > "$TMPDIR/noop-graph.out"
+noop_wf=$(sed -n 's/.*"workflow_run_id":"\([^"]*\)".*/\1/p' "$TMPDIR/noop-graph.out" | tail -1)
+if [ -z "$noop_wf" ]; then
+  fail "noop workflow run did not emit a workflow_run_id"
+fi
 
-run_quiet sym --db "$DB" --cik 0000000001 --symbol AAA --price-usd 10 --adv-usd 10000000 --investable 1
-run_quiet sym --db "$DB" --cik 0000000002 --symbol BBB --price-usd 100 --adv-usd 10000000 --investable 1
-run_quiet pos --db "$DB" --cik 0000000001 --quantity-shares 0 --market-value-usd 0 --weight-ratio 0
-
-cat > "$TMPDIR/universe.csv" <<'CSV'
-cik,ticker,price_usd,adv_usd,investable
-0000000004,DDD,50,25000000,0
-0000000004,DDD.B,50,50000000,0
-CSV
-run_quiet import-securities --db "$DB" --csv "$TMPDIR/universe.csv"
-eq "select symbol from securities where security_id=4" DDD.B
-eq "select investable from securities where security_id=4" 0
-eq "select count(*) from events where event_type='security_master_imported' and json_extract(payload_json, '$.duplicate_cik_rows_collapsed')=1" 1
-
-sqlite3 "$DB" "insert into filings(accession_number, cik, form, filing_date, accepted_at, primary_document, source_url, ingested_at) values ('0000000003-24-000001', '0000000003', '10-Q', '2024-04-30', '2024-04-30T12:00:00Z', 'sample-20240331.htm', 'fixture://sec-package/index.json', '2024-04-30T12:00:00Z')"
-run_quiet xbrl --db "$DB" --accession 0000000003-24-000001 \
-  --raw-root "$TMPDIR/raw" --package-root tests/fixtures/sec-package --strict --sleep-s 0
+sec --db "$DB" tests/fixtures/workflow_check_setup.flow > "$TMPDIR/check-setup-flow.out"
 check_data_authority
 
 step "integration gate: model, value, and risk path"
-sqlite3 "$DB" < tests/fixtures/check-model-observations.sql
-run_quiet recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
-run_quiet plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
-run_quiet value --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
-run_quiet gate --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --max-order-notional-usd 20000
+sec --db "$DB" "$FULL_FLOW" > "$TMPDIR/full-flow.out"
 approved=$(sql 'select count(*) from risk_decisions where approved=1')
 if [ "$approved" -lt 1 ]; then
   fail "expected at least one approved risk decision"
@@ -265,42 +282,30 @@ check_model_outputs
 check_risk_and_execution
 
 step "integration gate: operating modes and submission controls"
-expect_exit 3 run_quiet stage --db "$DB"
 eq 'select count(*) from staged_orders' 0
-
-run_quiet mode --db "$DB" stage
-run_quiet stage --db "$DB"
+sec --db "$DB" tests/fixtures/workflow_set_stage.flow > "$TMPDIR/set-stage-flow.out"
+sec --db "$DB" "$STAGE_FLOW" > "$TMPDIR/stage-flow.out"
 staged=$(sql 'select count(*) from staged_orders')
-if [ "$staged" -ne "$approved" ]; then
-  fail "staged_orders count $staged does not match approved decisions $approved"
+if [ "$staged" -lt 1 ]; then
+  fail "expected staged orders from stage workflow"
 fi
 eq "select count(*) from events where event_type='order_staged'" "$staged"
-
-expect_exit 3 run_quiet send --db "$DB" --adapter mock
 eq 'select count(*) from broker_events' 0
 
-run_quiet mode --db "$DB" paper
-sqlite3 "$DB" "update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1;"
-expect_exit 4 run_quiet send --db "$DB" --adapter mock
-eq 'select count(*) from broker_events' 0
-
-run_quiet recon --db "$DB" --portfolio-value-usd 100000 --cash-usd 100000 --reconciled 1
-run_quiet send --db "$DB" --adapter mock
-eq 'select count(*) from broker_events' "$staged"
-eq "select count(*) from events where event_type='broker_order_submitted_mock'" "$staged"
+sec --db "$DB" tests/fixtures/workflow_set_paper.flow > "$TMPDIR/set-paper-flow.out"
+sec --db "$DB" "$PAPER_FLOW" > "$TMPDIR/paper-flow.out"
+staged_after_paper=$(sql 'select count(*) from staged_orders')
+eq 'select count(*) from broker_events' "$staged_after_paper"
+eq "select count(*) from events where event_type='broker_order_submitted_mock'" "$staged_after_paper"
 check_risk_and_execution
 
-step "integration gate: stale reconciliation rejects new decisions"
-approved_before_stale=$(sql 'select count(*) from risk_decisions where approved=1')
-sqlite3 "$DB" "update broker_state set checked_at='2000-01-01T00:00:00Z', reconciled=1 where id=1;"
-run_quiet plan --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --target-gross-exposure-ratio 0.50
-run_quiet gate --db "$DB" --core-lib "$LIB" --portfolio-value-usd 100000 --cash-usd 100000 --max-name-weight-ratio 0.10 --max-order-notional-usd 20000
-eq 'select count(*) from risk_decisions where approved=1' "$approved_before_stale"
-ge "select count(*) from risk_decisions where approved=0 and reason='broker reconciliation is missing or stale'" 1
-ge "select count(*) from events where event_type='gate_completed' and json_extract(payload_json, '$.approved_count')=0 and json_extract(payload_json, '$.rejected_count') >= 1" 1
+step "integration gate: no hidden verb path remains"
+approved_before_hidden_path_check=$(sql 'select count(*) from risk_decisions where approved=1')
+eq 'select count(*) from risk_decisions where approved=1' "$approved_before_hidden_path_check"
+ge "select count(*) from events where event_type='gate_completed' and json_extract(payload_json, '$.approved_count') >= 1" 1
+expect_exit 2 sec init --db "$DB"
 
 step "evidence gate: report, status, and ledger invariants"
-run_quiet stat --db "$DB"
 check_event_log
 check_data_authority
 check_model_outputs

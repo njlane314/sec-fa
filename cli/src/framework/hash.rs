@@ -93,11 +93,7 @@ pub fn node_run_id(
 }
 
 pub fn cell_id(layer: &str, key: &Value) -> Result<String> {
-    Ok(format!(
-        "{}:{}",
-        layer,
-        &canonical_sha256(key)?[..24]
-    ))
+    Ok(format!("{}:{}", layer, &canonical_sha256(key)?[..24]))
 }
 
 #[cfg(test)]

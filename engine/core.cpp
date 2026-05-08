@@ -74,7 +74,11 @@ bool observation_status_is_usable(uint32_t status) {
 bool metric_requires_duration(int32_t metric_id) {
     return metric_id == FA_METRIC_REVENUE || metric_id == FA_METRIC_NET_INCOME ||
            metric_id == FA_METRIC_EPS_DILUTED || metric_id == FA_METRIC_OPERATING_CASH_FLOW ||
-           metric_id == FA_METRIC_CAPEX;
+           metric_id == FA_METRIC_CAPEX || metric_id == FA_METRIC_GROSS_PROFIT ||
+           metric_id == FA_METRIC_OPERATING_INCOME ||
+           metric_id == FA_METRIC_RESEARCH_AND_DEVELOPMENT ||
+           metric_id == FA_METRIC_STOCK_BASED_COMPENSATION ||
+           metric_id == FA_METRIC_INTEREST_EXPENSE || metric_id == FA_METRIC_BUYBACKS;
 }
 
 bool duration_is_quarter_like(uint32_t duration_days) {

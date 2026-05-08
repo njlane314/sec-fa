@@ -31,17 +31,6 @@ struct ProducedProduct {
     run_id: Option<String>,
 }
 
-pub fn run_sec_command(args: &[String]) -> Result<CommandResult> {
-    let exe = std::env::current_exe()?;
-    let out = std::process::Command::new(exe).args(args).output()?;
-
-    Ok(CommandResult {
-        stdout: String::from_utf8_lossy(&out.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&out.stderr).to_string(),
-        exit_code: out.status.code().unwrap_or(127),
-    })
-}
-
 pub fn run_validated_workflow(
     conn: &mut Connection,
     db_path: &Path,
@@ -196,7 +185,9 @@ pub fn run_validated_workflow(
 }
 
 enum AlgorithmExecution {
-    Noop { payload: Value },
+    Noop {
+        payload: Value,
+    },
     Command {
         command_result: CommandResult,
         run_id: Option<String>,
@@ -224,17 +215,21 @@ fn execute_algorithm(
             }),
         });
     }
-    if algorithm.executable_kind != "command" {
+    if algorithm.executable_kind != "rust_operation" && algorithm.executable_kind != "command" {
         bail!(
             "unsupported executable_kind={} for algorithm {}",
             algorithm.executable_kind,
             algorithm.algorithm_id
         );
     }
-    let inherited_run_id = input_products.iter().find_map(|product| product.run_id.clone());
-    let args = command_args(db_path, node, algorithm, inherited_run_id.as_deref())?;
-    let command_result = run_sec_command(&args)?;
-    let extracted_run_id = run_id_from_stdout(&command_result.stdout).or(inherited_run_id);
+    let inherited_run_id = input_products
+        .iter()
+        .find_map(|product| product.run_id.clone());
+    let command_result =
+        crate::run_graph_algorithm_command(db_path, node, algorithm, inherited_run_id.as_deref())?;
+    let extracted_run_id =
+        command_artifact_id_from_stdout(&algorithm.algorithm_id, &command_result.stdout)
+            .or(inherited_run_id);
     Ok(AlgorithmExecution::Command {
         command_result,
         run_id: extracted_run_id,
@@ -419,9 +414,7 @@ fn output_roles_for_type(node: &NodeSpec, product_type: &str, fallback: &str) ->
     let roles = node
         .outputs
         .iter()
-        .filter_map(|output| {
-            (output.product_type == product_type).then_some(output.role.clone())
-        })
+        .filter_map(|output| (output.product_type == product_type).then_some(output.role.clone()))
         .collect::<Vec<_>>();
     if roles.is_empty() {
         vec![fallback.to_string()]
@@ -572,142 +565,13 @@ fn persist_violations(
     Ok(())
 }
 
-fn command_args(
-    db_path: &Path,
-    node: &NodeSpec,
-    algorithm: &Algorithm,
-    inherited_run_id: Option<&str>,
-) -> Result<Vec<String>> {
-    let db = db_path.to_string_lossy().to_string();
-    let config = &node.config;
-    match algorithm.algorithm_id.as_str() {
-        "cmd.recon.v1" => Ok(vec![
-            "recon".to_string(),
-            "--db".to_string(),
-            db,
-            "--portfolio-value-usd".to_string(),
-            required_f64(config, "portfolio_value_usd")?.to_string(),
-            "--cash-usd".to_string(),
-            required_f64(config, "cash_usd")?.to_string(),
-            "--reconciled".to_string(),
-            if config
-                .get("reconciled")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                "1".to_string()
-            } else {
-                "0".to_string()
-            },
-        ]),
-        "cmd.value.v1" => Ok(vec![
-            "value".to_string(),
-            "--db".to_string(),
-            db,
-            "--core-lib".to_string(),
-            required_string(config, "core_lib")?,
-            "--portfolio-value-usd".to_string(),
-            required_f64(config, "portfolio_value_usd")?.to_string(),
-            "--cash-usd".to_string(),
-            required_f64(config, "cash_usd")?.to_string(),
-            "--max-name-weight-ratio".to_string(),
-            required_f64(config, "max_name_weight_ratio")?.to_string(),
-            "--target-gross-exposure-ratio".to_string(),
-            required_f64(config, "target_gross_exposure_ratio")?.to_string(),
-            "--max-order-notional-usd".to_string(),
-            required_f64(config, "max_order_notional_usd")?.to_string(),
-            "--min-adv-usd".to_string(),
-            required_f64(config, "min_adv_usd")?.to_string(),
-            "--max-adv-participation-ratio".to_string(),
-            required_f64(config, "max_adv_participation_ratio")?.to_string(),
-            "--max-reconciliation-age-s".to_string(),
-            required_i64(config, "max_reconciliation_age_s")?.to_string(),
-        ]),
-        "cmd.gate.v1" => {
-            let run_id = inherited_run_id
-                .or_else(|| config.get("run_id").and_then(Value::as_str))
-                .ok_or_else(|| anyhow!("cmd.gate.v1 requires resolved run_id"))?;
-            Ok(vec![
-                "gate".to_string(),
-                "--db".to_string(),
-                db,
-                "--core-lib".to_string(),
-                required_string(config, "core_lib")?,
-                "--run-id".to_string(),
-                run_id.to_string(),
-                "--portfolio-value-usd".to_string(),
-                required_f64(config, "portfolio_value_usd")?.to_string(),
-                "--cash-usd".to_string(),
-                required_f64(config, "cash_usd")?.to_string(),
-                "--max-name-weight-ratio".to_string(),
-                required_f64(config, "max_name_weight_ratio")?.to_string(),
-                "--max-order-notional-usd".to_string(),
-                required_f64(config, "max_order_notional_usd")?.to_string(),
-                "--min-adv-usd".to_string(),
-                required_f64(config, "min_adv_usd")?.to_string(),
-                "--max-adv-participation-ratio".to_string(),
-                required_f64(config, "max_adv_participation_ratio")?.to_string(),
-                "--max-reconciliation-age-s".to_string(),
-                required_i64(config, "max_reconciliation_age_s")?.to_string(),
-            ])
+fn command_artifact_id_from_stdout(algorithm_id: &str, stdout: &str) -> Option<String> {
+    match algorithm_id {
+        "cmd.feat.v1" => {
+            feature_snapshot_id_from_stdout(stdout).or_else(|| run_id_from_stdout(stdout))
         }
-        "cmd.stage.v1" => {
-            let run_id = inherited_run_id
-                .or_else(|| config.get("run_id").and_then(Value::as_str))
-                .ok_or_else(|| anyhow!("cmd.stage.v1 requires resolved run_id"))?;
-            Ok(vec![
-                "stage".to_string(),
-                "--db".to_string(),
-                db,
-                "--run-id".to_string(),
-                run_id.to_string(),
-            ])
-        }
-        "cmd.send.mock.v1" => Ok(vec![
-            "send".to_string(),
-            "--db".to_string(),
-            db,
-            "--adapter".to_string(),
-            "mock".to_string(),
-            "--max-reconciliation-age-s".to_string(),
-            required_i64(config, "max_reconciliation_age_s")?.to_string(),
-        ]),
-        "cmd.report.daily.v1" => Ok(vec![
-            "report".to_string(),
-            "daily".to_string(),
-            "--db".to_string(),
-            db,
-            "--date".to_string(),
-            config
-                .get("date")
-                .and_then(Value::as_str)
-                .unwrap_or("today")
-                .to_string(),
-        ]),
-        _ => bail!("no command mapping for algorithm {}", algorithm.algorithm_id),
+        _ => run_id_from_stdout(stdout),
     }
-}
-
-fn required_f64(config: &Value, key: &str) -> Result<f64> {
-    config
-        .get(key)
-        .and_then(Value::as_f64)
-        .ok_or_else(|| anyhow!("missing numeric config.{key}"))
-}
-
-fn required_i64(config: &Value, key: &str) -> Result<i64> {
-    config
-        .get(key)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| anyhow!("missing integer config.{key}"))
-}
-
-fn required_string(config: &Value, key: &str) -> Result<String> {
-    config
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| anyhow!("missing string config.{key}"))
 }
 
 fn run_id_from_stdout(stdout: &str) -> Option<String> {
@@ -729,6 +593,26 @@ fn run_id_from_stdout(stdout: &str) -> Option<String> {
     None
 }
 
+fn feature_snapshot_id_from_stdout(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if let Some(feature_snapshot_id) = value
+            .get("payload")
+            .and_then(|payload| payload.get("feature_snapshot_id"))
+            .and_then(Value::as_str)
+        {
+            return Some(feature_snapshot_id.to_string());
+        }
+        if let Some(feature_snapshot_id) = value.get("feature_snapshot_id").and_then(Value::as_str)
+        {
+            return Some(feature_snapshot_id.to_string());
+        }
+    }
+    None
+}
+
 fn domain_storage_ref(
     algorithm_id: &str,
     product_type: &str,
@@ -737,6 +621,15 @@ fn domain_storage_ref(
 ) -> String {
     match (algorithm_id, product_type) {
         ("cmd.recon.v1", "reconciliation_snapshot.v1") => "sqlite:broker_state:id=1".to_string(),
+        ("cmd.plan.v1", "forecast_set.v1") => {
+            format!("sqlite:forecasts:run_id={}", run_id.unwrap_or(""))
+        }
+        ("cmd.plan.v1", "target_weight_set.v1") => {
+            format!("sqlite:target_weights:run_id={}", run_id.unwrap_or(""))
+        }
+        ("cmd.plan.v1", "order_intent_set.v1") => {
+            format!("sqlite:order_intents:run_id={}", run_id.unwrap_or(""))
+        }
         ("cmd.value.v1", "statement_snapshot_set.v1") => {
             "sqlite:statement_snapshots:latest_run_or_time".to_string()
         }
@@ -751,6 +644,12 @@ fn domain_storage_ref(
         }
         ("cmd.gate.v1", "risk_decision_set.v1") => {
             format!("sqlite:risk_decisions:run_id={}", run_id.unwrap_or(""))
+        }
+        ("cmd.feat.v1", "feature_snapshot_set.v1") => {
+            format!(
+                "sqlite:feature_snapshots:feature_snapshot_id={}",
+                run_id.unwrap_or("")
+            )
         }
         ("cmd.stage.v1", "staged_order_set.v1") => {
             format!("sqlite:staged_orders:run_id={}", run_id.unwrap_or(""))
@@ -781,7 +680,8 @@ mod tests {
 
     fn memory_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("../../../schema.sql")).unwrap();
+        conn.execute_batch(include_str!("../../../schema.sql"))
+            .unwrap();
         seed_product_graph_reference_data(&conn).unwrap();
         conn
     }
@@ -796,13 +696,21 @@ mod tests {
             run_id_from_stdout("not json\n{\"run_id\":\"def\"}"),
             Some("def".to_string())
         );
+        assert_eq!(
+            command_artifact_id_from_stdout(
+                "cmd.feat.v1",
+                r#"{"payload":{"feature_snapshot_id":"feat_123"}}"#
+            ),
+            Some("feat_123".to_string())
+        );
     }
 
     #[test]
     fn graph_allows_noop() {
         let mut conn = memory_conn();
-        let parsed = parse_workflow_spec(include_str!("../../../tests/fixtures/workflow_noop.json"))
-            .unwrap();
+        let parsed =
+            parse_workflow_spec(include_str!("../../../tests/fixtures/workflow_noop.flow"))
+                .unwrap();
         let (_report, validated) = validate_workflow(&conn, parsed).unwrap();
         let workflow_run_id = run_validated_workflow(
             &mut conn,
@@ -831,17 +739,30 @@ mod tests {
     #[test]
     fn graph_run_records_lineage() {
         let mut conn = memory_conn();
-        let text = r#"{
-          "spec_version": 1,
-          "workflow_name": "lineage",
-          "driver": {"driver_id":"test","mode":"observe","decision_as_of":"2026-05-08T13:00:00.000Z","allow_external_write":false,"allow_broker_resource":false},
-          "layers": [{"layer":"job","parent":null,"key_fields":["id"]}],
-          "resources": [],
-          "nodes": [
-            {"node_id":"a","algorithm":"noop.test.v1","cell":{"layer":"job","key":{"id":"a"}},"config":{"message":"a"},"inputs":[],"outputs":[{"role":"output","product_type":"command_output.v1"}]},
-            {"node_id":"b","algorithm":"noop.test.v1","cell":{"layer":"job","key":{"id":"b"}},"config":{"message":"b"},"inputs":[{"from":"a","role":"output"}],"outputs":[{"role":"output","product_type":"command_output.v1"}]}
-          ]
-        }"#;
+        let text = r#"
+workflow lineage
+driver test
+mode observe
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+layer job key id
+
+node a
+  alg noop.test.v1
+  cell job id=a
+  set message a
+  output output command_output.v1
+end
+
+node b
+  alg noop.test.v1
+  cell job id=b
+  set message b
+  input output from a.output
+  output output command_output.v1
+end
+"#;
         let parsed = parse_workflow_spec(text).unwrap();
         let (_report, validated) = validate_workflow(&conn, parsed).unwrap();
         run_validated_workflow(
@@ -851,7 +772,9 @@ mod tests {
         )
         .unwrap();
         let lineage_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM data_product_lineage", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM data_product_lineage", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert!(lineage_count > 0);
     }
@@ -859,8 +782,9 @@ mod tests {
     #[test]
     fn replay_deterministic_noop() {
         let mut conn = memory_conn();
-        let parsed = parse_workflow_spec(include_str!("../../../tests/fixtures/workflow_noop.json"))
-            .unwrap();
+        let parsed =
+            parse_workflow_spec(include_str!("../../../tests/fixtures/workflow_noop.flow"))
+                .unwrap();
         let (_report, validated) = validate_workflow(&conn, parsed).unwrap();
         let workflow_run_id = run_validated_workflow(
             &mut conn,

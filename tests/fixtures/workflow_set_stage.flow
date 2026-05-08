@@ -1,0 +1,17 @@
+workflow check_set_stage
+driver check_fixture.v1
+mode stage
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+
+layer job key workflow_name mode
+
+resource sqlite.local sqlite max_concurrent 1 min_interval_ms 0 allowed_modes observe,shadow,stage,paper,live_limited,live,halted hazard_class B
+
+node set_mode
+  alg fixture.set_mode.v1
+  cell job workflow_name=check_set_stage mode=stage
+  set mode stage
+  output output command_output.v1
+end

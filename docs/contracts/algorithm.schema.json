@@ -24,7 +24,7 @@
     "hazard_class": {"enum": ["A", "B", "C"]},
     "purity": {"enum": ["pure", "deterministic_io", "external_read", "external_write"]},
     "deterministic": {"type": "boolean"},
-    "executable_kind": {"enum": ["builtin", "command", "c_abi", "noop_test"]},
+    "executable_kind": {"enum": ["builtin", "rust_operation", "command", "c_abi", "noop_test"]},
     "executable_ref": {"type": "string"},
     "inputs": {"type": "array", "items": {"type": "string"}},
     "outputs": {"type": "array", "items": {"type": "string"}},

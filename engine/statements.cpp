@@ -7,8 +7,8 @@ namespace {
 
 using namespace kernel;
 
-constexpr size_t kMaxAnchorsPerSecurity = 8u;
-constexpr size_t kMaxStatementsPerSecurity = 2u;
+constexpr size_t kMaxAnchorsPerSecurity = 12u;
+constexpr size_t kMaxStatementsPerSecurity = 12u;
 constexpr uint32_t kStatementLowConfidenceObservationFlags =
     FA_QUALITY_LOW_CONFIDENCE | FA_QUALITY_MISSING_COMPARABLE |
     FA_QUALITY_DURATION_MISMATCH | FA_QUALITY_BASIS_TRANSITION |
@@ -83,6 +83,19 @@ bool annual_flow_fact_usable(const fa_canonical_fact_v1& fact,
            flow_kind_ok(fact.metric_kind) &&
            fact.period_semantics == FA_PERIOD_FISCAL_YEAR &&
            fact.duration_days >= 330u && fact.duration_days <= 380u;
+}
+
+bool ytd_flow_fact_usable(const fa_canonical_fact_v1& fact,
+                          uint64_t security_id,
+                          int32_t metric_id,
+                          int64_t anchor_day,
+                          int64_t now_epoch_s,
+                          int64_t max_fact_age_s) {
+    return basic_fact_usable(fact, security_id, metric_id, anchor_day, now_epoch_s,
+                             max_fact_age_s) &&
+           flow_kind_ok(fact.metric_kind) &&
+           fact.period_semantics == FA_PERIOD_FISCAL_YTD &&
+           fact.duration_days >= 130u && fact.duration_days <= 300u;
 }
 
 bool revenue_anchor_fact_usable(const fa_canonical_fact_v1& fact,
@@ -161,6 +174,9 @@ uint32_t statement_quality_from_observations(uint32_t flags) {
     if ((flags & (FA_QUALITY_AMENDED_FILING | FA_QUALITY_RESTATEMENT)) != 0u) {
         out |= FA_STMT_AMENDED_OR_RESTATED;
     }
+    if ((flags & FA_QUALITY_DERIVED) != 0u) {
+        out |= FA_STMT_DERIVED_TTM;
+    }
     if ((flags & kStatementLowConfidenceObservationFlags) != 0u) {
         out |= FA_STMT_LOW_CONFIDENCE;
     }
@@ -169,6 +185,19 @@ uint32_t statement_quality_from_observations(uint32_t flags) {
         out |= FA_STMT_NON_COMPARABLE_PERIOD;
     }
     return out;
+}
+
+bool close_days(int64_t lhs, int64_t rhs, int64_t tolerance_days) {
+    const int64_t diff = lhs > rhs ? lhs - rhs : rhs - lhs;
+    return diff <= tolerance_days;
+}
+
+bool flow_identity_compatible(const fa_canonical_fact_v1& lhs,
+                              const fa_canonical_fact_v1& rhs) {
+    return lhs.metric_id == rhs.metric_id &&
+           lhs.metric_kind == rhs.metric_kind &&
+           lhs.basis_id == rhs.basis_id &&
+           lhs.dimensions_hash == rhs.dimensions_hash;
 }
 
 MetricPoint point_from_fact(const fa_canonical_fact_v1& fact) {
@@ -208,6 +237,107 @@ bool choose_exact_annual_flow(const fa_canonical_fact_v1* facts,
     }
     if (found && out != nullptr) {
         *out = point_from_fact(selected);
+    }
+    return found;
+}
+
+bool choose_ytd_bridge_ttm_flow(const fa_canonical_fact_v1* facts,
+                                size_t fact_count,
+                                uint64_t security_id,
+                                int32_t metric_id,
+                                int64_t anchor_day,
+                                int64_t now_epoch_s,
+                                int64_t max_fact_age_s,
+                                MetricPoint* out) {
+    bool found = false;
+    MetricPoint selected{};
+
+    for (size_t i = 0u; i < fact_count; ++i) {
+        const fa_canonical_fact_v1& current = facts[i];
+        if (current.period_end_day != anchor_day) {
+            continue;
+        }
+        const bool current_is_ytd =
+            ytd_flow_fact_usable(current, security_id, metric_id, anchor_day,
+                                 now_epoch_s, max_fact_age_s);
+        const bool current_is_q1 =
+            quarter_flow_fact_usable(current, security_id, metric_id, anchor_day,
+                                     now_epoch_s, max_fact_age_s);
+        if (!current_is_ytd && !current_is_q1) {
+            continue;
+        }
+
+        for (size_t j = 0u; j < fact_count; ++j) {
+            const fa_canonical_fact_v1& annual = facts[j];
+            if (!annual_flow_fact_usable(annual, security_id, metric_id,
+                                         anchor_day, now_epoch_s, max_fact_age_s)) {
+                continue;
+            }
+            if (!flow_identity_compatible(current, annual)) {
+                continue;
+            }
+            if (annual.period_end_day >= current.period_end_day ||
+                !close_days(annual.period_end_day + 1, current.period_start_day, 7)) {
+                continue;
+            }
+
+            bool prior_found = false;
+            fa_canonical_fact_v1 prior{};
+            for (size_t k = 0u; k < fact_count; ++k) {
+                const fa_canonical_fact_v1& candidate = facts[k];
+                if (!basic_fact_usable(candidate, security_id, metric_id,
+                                       annual.period_end_day, now_epoch_s,
+                                       max_fact_age_s)) {
+                    continue;
+                }
+                if (!flow_kind_ok(candidate.metric_kind) ||
+                    candidate.period_semantics != current.period_semantics ||
+                    !flow_identity_compatible(candidate, current)) {
+                    continue;
+                }
+                if (!close_days(candidate.period_start_day, annual.period_start_day, 7) ||
+                    !close_days(candidate.duration_days, current.duration_days, 7)) {
+                    continue;
+                }
+                if (candidate.period_end_day >= annual.period_end_day) {
+                    continue;
+                }
+                if (!prior_found ||
+                    candidate.available_at_epoch_s > prior.available_at_epoch_s) {
+                    prior = candidate;
+                    prior_found = true;
+                }
+            }
+            if (!prior_found) {
+                continue;
+            }
+
+            MetricPoint candidate{};
+            candidate.ok = true;
+            candidate.value = annual.value + current.value - prior.value;
+            candidate.start_day = annual.period_start_day > 0 ? annual.period_start_day
+                                                               : annual.period_end_day;
+            candidate.end_day = anchor_day;
+            candidate.available_at = annual.available_at_epoch_s;
+            if (current.available_at_epoch_s > candidate.available_at) {
+                candidate.available_at = current.available_at_epoch_s;
+            }
+            if (prior.available_at_epoch_s > candidate.available_at) {
+                candidate.available_at = prior.available_at_epoch_s;
+            }
+            candidate.quality_flags =
+                annual.quality_flags | current.quality_flags | prior.quality_flags |
+                FA_QUALITY_DERIVED;
+
+            if (!found || candidate.available_at > selected.available_at) {
+                selected = candidate;
+                found = true;
+            }
+        }
+    }
+
+    if (found && out != nullptr) {
+        *out = selected;
     }
     return found;
 }
@@ -280,6 +410,10 @@ MetricPoint latest_flow_ttm(const fa_canonical_fact_v1* facts,
     }
     if (choose_quarter_ttm_flow(facts, fact_count, security_id, metric_id,
                                 anchor_day, now_epoch_s, max_fact_age_s, &out)) {
+        return out;
+    }
+    if (choose_ytd_bridge_ttm_flow(facts, fact_count, security_id, metric_id,
+                                   anchor_day, now_epoch_s, max_fact_age_s, &out)) {
         return out;
     }
     return {};
@@ -421,6 +555,12 @@ bool build_statement_for_anchor(const fa_canonical_fact_v1* facts,
     if (!shares.ok || shares.value <= 0.0) {
         quality |= FA_STMT_MISSING_SHARES | FA_STMT_LOW_CONFIDENCE;
     }
+    if (!ocf.ok) {
+        quality |= FA_STMT_MISSING_OPERATING_CASH_FLOW | FA_STMT_LOW_CONFIDENCE;
+    }
+    if (!capex.ok) {
+        quality |= FA_STMT_MISSING_CAPEX | FA_STMT_LOW_CONFIDENCE;
+    }
     if (!cash.ok) {
         quality |= FA_STMT_MISSING_CASH;
     }
@@ -428,8 +568,8 @@ bool build_statement_for_anchor(const fa_canonical_fact_v1* facts,
         quality |= FA_STMT_MISSING_DEBT;
     }
 
-    const double fcf = (ocf.ok ? ocf.value : 0.0) - (capex.ok ? capex.value : 0.0);
-    if (fcf < 0.0) {
+    const double fcf = (ocf.ok && capex.ok) ? ocf.value - capex.value : 0.0;
+    if (ocf.ok && capex.ok && fcf < 0.0) {
         quality |= FA_STMT_NEGATIVE_FCF;
     }
 

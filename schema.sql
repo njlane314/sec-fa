@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS securities (
     investable INTEGER NOT NULL DEFAULT 0,
     price_usd REAL NOT NULL DEFAULT 0,
     adv_usd REAL NOT NULL DEFAULT 0,
+    peer_group TEXT NOT NULL DEFAULT '',
+    sector TEXT NOT NULL DEFAULT '',
+    industry TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
 );
 
@@ -380,6 +383,58 @@ CREATE TABLE IF NOT EXISTS statement_snapshots (
 CREATE INDEX IF NOT EXISTS idx_statement_snapshots_lookup
     ON statement_snapshots(security_id, period_end_date, available_at);
 
+CREATE TABLE IF NOT EXISTS feature_snapshots (
+    feature_snapshot_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    universe_snapshot_id TEXT REFERENCES universe_snapshots(snapshot_id),
+    as_of_time TEXT NOT NULL,
+    feature_version TEXT NOT NULL,
+    input_statement_hash TEXT NOT NULL,
+    security_count INTEGER NOT NULL,
+    rule_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_snapshots_lookup
+    ON feature_snapshots(name, as_of_time, created_at);
+
+CREATE TABLE IF NOT EXISTS feature_rows (
+    feature_snapshot_id TEXT NOT NULL REFERENCES feature_snapshots(feature_snapshot_id),
+    security_id INTEGER NOT NULL REFERENCES securities(security_id),
+    symbol TEXT NOT NULL,
+    peer_group TEXT NOT NULL,
+    sector TEXT NOT NULL,
+    industry TEXT NOT NULL,
+    period_end_date TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    revenue_ttm_usd REAL NOT NULL,
+    revenue_growth_yoy_ratio REAL NOT NULL,
+    net_margin_ratio REAL NOT NULL,
+    operating_cash_flow_ttm_usd REAL NOT NULL,
+    capex_ttm_usd REAL NOT NULL,
+    free_cash_flow_ttm_usd REAL NOT NULL,
+    fcf_margin_ratio REAL NOT NULL,
+    cash_usd REAL NOT NULL,
+    debt_usd REAL NOT NULL,
+    net_debt_usd REAL NOT NULL,
+    net_debt_to_revenue_ratio REAL NOT NULL,
+    diluted_shares REAL NOT NULL,
+    statement_quality_flags INTEGER NOT NULL,
+    feature_quality_flags INTEGER NOT NULL,
+    source_statement_snapshot_id TEXT NOT NULL REFERENCES statement_snapshots(snapshot_id),
+    previous_statement_snapshot_id TEXT REFERENCES statement_snapshots(snapshot_id),
+    row_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(feature_snapshot_id, security_id),
+    UNIQUE(feature_snapshot_id, row_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_rows_security
+    ON feature_rows(security_id, period_end_date, available_at);
+
+CREATE INDEX IF NOT EXISTS idx_feature_rows_peer
+    ON feature_rows(peer_group, sector, industry);
+
 CREATE TABLE IF NOT EXISTS model_assumptions (
     assumption_set_id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,
@@ -544,6 +599,7 @@ CREATE TABLE IF NOT EXISTS algorithm_registry (
     deterministic INTEGER NOT NULL CHECK (deterministic IN (0,1)),
     executable_kind TEXT NOT NULL CHECK (executable_kind IN (
         'builtin',
+        'rust_operation',
         'command',
         'c_abi',
         'noop_test'
@@ -680,7 +736,13 @@ INSERT OR IGNORE INTO metric_definitions(metric_id, metric_name, metric_kind, no
     (5, 'operating_cash_flow', 'flow', 'USD', 'additive_over_time', 'consolidated_total_only', 'Operating cash flow.'),
     (6, 'capex', 'flow', 'USD', 'additive_over_time', 'consolidated_total_only', 'Capital expenditure cash outflow.'),
     (7, 'cash', 'instant', 'USD', 'point_in_time', 'consolidated_total_only', 'Cash and cash equivalents.'),
-    (8, 'debt', 'instant', 'USD', 'point_in_time', 'consolidated_total_only', 'Debt obligations.');
+    (8, 'debt', 'instant', 'USD', 'point_in_time', 'consolidated_total_only', 'Debt obligations.'),
+    (9, 'gross_profit', 'flow', 'USD', 'additive_over_time', 'consolidated_total_only', 'Gross profit.'),
+    (10, 'operating_income', 'flow', 'USD', 'additive_over_time', 'consolidated_total_only', 'Operating income or loss.'),
+    (11, 'research_and_development', 'flow', 'USD', 'additive_over_time', 'consolidated_total_only', 'Research and development expense.'),
+    (12, 'stock_based_compensation', 'flow', 'USD', 'additive_over_time', 'consolidated_total_only', 'Stock-based compensation expense.'),
+    (13, 'interest_expense', 'flow', 'USD', 'additive_over_time', 'consolidated_total_only', 'Interest expense.'),
+    (14, 'buybacks', 'flow', 'USD', 'additive_over_time', 'consolidated_total_only', 'Share repurchases.');
 
 INSERT OR IGNORE INTO measurement_bases(basis_id, metric_id, basis_name, accounting_scope, tax_treatment, preferred, notes) VALUES
     (101, 1, 'customer_contract_revenue_excluding_assessed_tax', 'consolidated', 'excluding_assessed_tax', 1, 'Preferred ASC 606 revenue basis.'),
@@ -693,4 +755,15 @@ INSERT OR IGNORE INTO measurement_bases(basis_id, metric_id, basis_name, account
     (501, 5, 'net_cash_provided_by_used_in_operating_activities', 'consolidated', 'not_applicable', 1, 'Operating cash flow basis.'),
     (601, 6, 'payments_to_acquire_pp_e', 'consolidated', 'not_applicable', 1, 'Capital expenditure basis.'),
     (701, 7, 'cash_and_cash_equivalents', 'consolidated', 'not_applicable', 1, 'Cash basis.'),
-    (801, 8, 'long_term_debt', 'consolidated', 'not_applicable', 1, 'Debt basis.');
+    (801, 8, 'long_term_debt', 'consolidated', 'not_applicable', 1, 'Debt basis.'),
+    (901, 9, 'gross_profit', 'consolidated', 'not_applicable', 1, 'Gross profit basis.'),
+    (1001, 10, 'operating_income_loss', 'consolidated', 'not_applicable', 1, 'Operating income/loss basis.'),
+    (1101, 11, 'research_and_development_expense', 'consolidated', 'not_applicable', 1, 'Research and development expense basis.'),
+    (1201, 12, 'share_based_compensation', 'consolidated', 'not_applicable', 1, 'Stock-based compensation basis.'),
+    (1202, 12, 'allocated_share_based_compensation_expense', 'consolidated', 'not_applicable', 0, 'Allocated stock-based compensation fallback.'),
+    (1301, 13, 'interest_expense_nonoperating', 'consolidated', 'not_applicable', 1, 'Nonoperating interest expense basis.'),
+    (1302, 13, 'interest_expense', 'consolidated', 'not_applicable', 0, 'Generic interest expense fallback.'),
+    (1303, 13, 'interest_expense_debt', 'consolidated', 'not_applicable', 0, 'Debt interest expense fallback.'),
+    (1401, 14, 'payments_for_repurchase_of_common_stock', 'consolidated', 'not_applicable', 1, 'Cash paid to repurchase common stock.'),
+    (1402, 14, 'stock_repurchased_and_retired_value', 'consolidated', 'not_applicable', 0, 'Stock repurchased and retired value fallback.'),
+    (1403, 14, 'stock_repurchased_value', 'consolidated', 'not_applicable', 0, 'Stock repurchased value fallback.');

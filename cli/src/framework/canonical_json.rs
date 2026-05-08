@@ -62,6 +62,9 @@ mod tests {
 
         assert_eq!(left_json, right_json);
         assert_eq!(left_json, r#"{"a":{"c":3,"d":4},"b":2}"#);
-        assert_eq!(sha256_hex(left_json.as_bytes()), sha256_hex(right_json.as_bytes()));
+        assert_eq!(
+            sha256_hex(left_json.as_bytes()),
+            sha256_hex(right_json.as_bytes())
+        );
     }
 }

@@ -77,11 +77,15 @@ feature_snapshot_id
 universe_snapshot_id
 as_of_time
 feature_version
-input_observation_hash
+input_statement_hash
 created_at
 ```
 
-`pland` and `value` should eventually consume a `feature_snapshot_id`. SEC parsing, canonicalization, and feature building stay on the slow path; staging and submission stay on the fast authority path.
+The current feature operation materializes rows from audited statement snapshots
+and records `feature_snapshot_created`. `pland` and value operations should
+eventually consume a `feature_snapshot_id`. SEC parsing, canonicalization, and
+feature building stay on the slow path; staging and submission stay on the fast
+authority path.
 
 ## Broker lifecycle
 
@@ -123,13 +127,14 @@ no duplicate client order id
 no dead work item that still holds a lease
 ```
 
-Replay/rebuild commands should reconstruct derived state from raw evidence after parser, feature, or model fixes:
+Replay/rebuild workflows should reconstruct derived state from raw evidence
+after parser, feature, or model fixes:
 
 ```text
-sec replay accession
-sec rebuild canonical
-sec rebuild features
-sec replay model-run
+workflow.replay_accession.flow
+workflow.rebuild_canonical.flow
+workflow.rebuild_features.flow
+workflow.replay_model_run.flow
 ```
 
 ## Example local process group

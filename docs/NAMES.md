@@ -122,6 +122,7 @@ univ
 recon
 plan
 value
+feat
 gate
 stage
 send
@@ -135,7 +136,7 @@ halt
 Prefer composition through the operational store over long command names. Example:
 
 ```text
-watch -> pull -> xbrl -> univ -> recon -> plan -> gate -> stage -> send -> report
+watch -> pull -> xbrl -> univ -> recon -> value -> feat -> gate -> stage -> send -> report
 ```
 
 ## Observation naming

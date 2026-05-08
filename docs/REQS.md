@@ -120,3 +120,6 @@ FA-MODEL-011
 
 FA-DATA-015
 : Any observation derived by arithmetic, including YTD subtraction, shall carry lineage to its parent observations and a quality flag identifying the derivation.
+
+FA-DATA-016
+: Feature snapshots shall be immutable, point-in-time materializations that reference source statement snapshots and carry input hashes plus quality flags.

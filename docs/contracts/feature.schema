@@ -1,0 +1,26 @@
+# feature snapshot row contract
+schema	feature
+kind	record
+version	1
+
+field	feature_snapshot_id	required	string	-	immutable feature snapshot id
+field	feature_version	required	string	-	feature construction version
+field	as_of_time	required	string	UTC-instant	point-in-time cutoff
+field	input_statement_hash	required	string	sha256	hash of selected statement snapshot inputs
+field	security_id	required	integer	-	internal security id
+field	symbol	required	string	-	display ticker at snapshot creation
+field	peer_group	required	string	-	analysis peer group
+field	period_end_date	required	string	calendar-date	source statement period end
+field	available_at	required	string	UTC-instant	source statement availability
+field	revenue_ttm_usd	required	number	USD	trailing twelve month revenue
+field	revenue_growth_yoy_ratio	required	number	ratio	year-over-year TTM revenue growth when comparable
+field	net_margin_ratio	required	number	ratio	net income divided by revenue
+field	free_cash_flow_ttm_usd	required	number	USD	operating cash flow less capex
+field	fcf_margin_ratio	required	number	ratio	free cash flow divided by revenue
+field	net_debt_to_revenue_ratio	required	number	ratio	net debt divided by revenue
+field	diluted_shares	required	number	shares	diluted share count
+field	statement_quality_flags	required	integer	min=0	bitset inherited from statement snapshots
+field	feature_quality_flags	required	integer	min=0	bitset for feature construction gaps
+field	source_statement_snapshot_id	required	string	-	latest source statement snapshot
+field	previous_statement_snapshot_id	optional	string|null	-	comparable prior statement snapshot when available
+field	row_hash	required	string	sha256	hash of row payload

@@ -1,0 +1,69 @@
+workflow shadow_value_pipeline
+driver point_in_time_shadow.v1
+mode shadow
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+
+layer job key workflow_name decision_as_of
+layer issuer parent job key cik
+layer accession parent issuer key cik accession_number
+layer portfolio parent job key portfolio_id
+layer decision_run parent portfolio key workflow_run_id
+
+resource sqlite.local sqlite max_concurrent 1 min_interval_ms 0 allowed_modes observe,shadow,stage,paper,live_limited,live,halted hazard_class B
+resource sec.http sec_http max_concurrent 1 min_interval_ms 150 allowed_modes observe,shadow,stage,paper,live_limited,live hazard_class B
+resource broker.adapter broker max_concurrent 1 min_interval_ms 0 allowed_modes paper,live_limited,live hazard_class A
+
+node reconcile
+  alg cmd.recon.v1
+  cell portfolio portfolio_id=default
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set reconciled true
+  output reconciliation reconciliation_snapshot.v1
+end
+
+node value
+  alg cmd.value.v1
+  cell decision_run portfolio_id=default
+  input reconciliation from reconcile.reconciliation
+  set core_lib build/libfolio.dylib
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set target_gross_exposure_ratio 0.50
+  set max_name_weight_ratio 0.05
+  set max_order_notional_usd 10000
+  set min_adv_usd 1000000
+  set max_adv_participation_ratio 0.01
+  set max_reconciliation_age_s 3600
+  output statement_snapshots statement_snapshot_set.v1
+  output valuations valuation_set.v1
+  output target_weights target_weight_set.v1
+  output order_intents order_intent_set.v1
+end
+
+node gate
+  alg cmd.gate.v1
+  cell decision_run portfolio_id=default
+  input order_intents from value.order_intents
+  input reconciliation from reconcile.reconciliation
+  set core_lib build/libfolio.dylib
+  set portfolio_value_usd 100000
+  set cash_usd 100000
+  set max_name_weight_ratio 0.05
+  set max_order_notional_usd 10000
+  set min_adv_usd 1000000
+  set max_adv_participation_ratio 0.01
+  set max_reconciliation_age_s 3600
+  output risk_decisions risk_decision_set.v1
+end
+
+node report
+  alg cmd.report.daily.v1
+  cell job report=daily
+  input valuations from value.valuations
+  input risk_decisions from gate.risk_decisions
+  set date today
+  output report report.v1
+end

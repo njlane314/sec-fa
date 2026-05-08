@@ -2,9 +2,11 @@
 
 ## 1. Purpose
 
-The product graph makes command outputs, model artifacts, risk decisions, and reports explicit data products. A workflow run records the algorithms invoked, the configuration hashes, the input and output product hashes, timestamps, and parent lineage needed to reconstruct a decision path.
+The product graph makes operation outputs, model artifacts, risk decisions, and reports explicit data products. A workflow run records the algorithms invoked, the configuration hashes, the input and output product hashes, timestamps, and parent lineage needed to reconstruct a decision path.
 
-The framework is additive. Existing commands remain the authority for their current work. The graph executor wraps those commands and persists typed products around them.
+The public operator interface is a `.flow` file passed to `sec`. Graph
+execution calls in-process Rust operations directly instead of spawning `sec`
+subcommands.
 
 ## 2. Product identity
 
@@ -22,10 +24,10 @@ The identity fields include product type, schema, cell, content hash, algorithm 
 
 ## 3. Layers And Cells
 
-Workflow nodes run in cells. A cell is a layer name plus a canonical JSON key:
+Workflow nodes run in cells. A cell is a layer name plus a canonicalized key:
 
 ```text
-cell_id = layer + ":" + sha256(canonical_json(key))[0:24]
+cell_id = layer + ":" + sha256(canonical_key(key))[0:24]
 ```
 
 Layers give the workflow a typed coordinate system such as `job`, `issuer`, `accession`, `portfolio`, or `decision_run`.
@@ -40,20 +42,48 @@ version
 hazard class
 purity
 determinism
-executable kind
+executable kind, usually `rust_operation` for SEC-FA operations
 input and output product types
 resources and forbidden resources
 ```
 
-The registry makes command execution explicit instead of relying on implicit command naming.
+The registry makes operation execution explicit instead of relying on command
+names or shell-visible verbs.
 
-## 5. Workflow JSON
+## 5. Workflow .flow
 
-Workflows are JSON documents with a driver, layers, resources, and nodes. The no-network fixture is `tests/fixtures/workflow_noop.json`.
+Workflows are authored as line-oriented `.flow` files with a driver, layers,
+resources, and nodes. The format is documented in
+`docs/contracts/workflow.format`; the no-network fixture is
+`tests/fixtures/workflow_noop.flow`. A full shadow analysis example that wraps
+the old `recon -> plan -> value -> feat -> gate -> report` sequence lives in
+`docs/contracts/workflow.full_analysis.flow`. Controlled stage and guarded mock
+paper examples live in `docs/contracts/workflow.stage_orders.flow` and
+`docs/contracts/workflow.paper_mock.flow`.
 
 ```sh
-./sec graph validate --db .fa.db --spec tests/fixtures/workflow_noop.json
-./sec graph run --db .fa.db --spec tests/fixtures/workflow_noop.json
+./sec --db .fa.db --validate tests/fixtures/workflow_noop.flow
+./sec --db .fa.db tests/fixtures/workflow_noop.flow
+```
+
+Minimal example:
+
+```text
+workflow noop_fixture
+driver test.v1
+mode observe
+decision_as_of 2026-05-08T13:00:00.000Z
+allow_external_write false
+allow_broker_resource false
+
+layer job key workflow_name
+
+node noop
+  alg noop.test.v1
+  cell job workflow_name=noop_fixture
+  set message test
+  output output command_output.v1
+end
 ```
 
 Output is JSONL:
@@ -73,6 +103,9 @@ Class C algorithms cannot produce authority-bearing products
 broker resources are blocked outside paper/live_limited/live
 external writes are blocked in observe and shadow
 runtime inputs must not be available after decision_as_of
+declared node inputs must match the algorithm input contract
+staged-order products must have a risk-decision parent
+broker-event products must have staged-order and reconciliation parents
 ```
 
 The graph framework does not replace the C++ risk gate. It enforces topology, provenance, and authority boundaries around the existing risk gate.
@@ -95,28 +128,35 @@ Graph validation rejects broker-resource and external-write algorithms unless th
 
 ## 8. Replay
 
-Replay loads the original workflow spec and node records, then re-checks deterministic outputs where the framework can reproduce them. The first implementation supports deterministic `noop.test.v1` replay:
+Replay loads the original workflow spec and node records, then re-checks
+deterministic outputs where the framework can do so without causing side
+effects. It recomputes pure `noop.test.v1` payload hashes. For deterministic
+Rust-operation nodes, it does not re-run mutating operations; it verifies the
+persisted operation-output hash, zero exit code, product config hash, and
+parent lineage. Replay is now an internal graph verification routine, not a
+public command surface.
 
-```sh
-./sec replay --db .fa.db --workflow-run-id wf_...
-```
+Replay succeeds only when those replay checks match the original products.
 
-Replay succeeds only when the recomputed content hash matches the original product hash.
+## 9. Relationship To Existing Operations
 
-## 9. Relationship To Existing Commands
-
-The graph executor wraps existing commands such as:
+The graph executor calls internal Rust operations such as:
 
 ```text
-recon
-value
-gate
-stage
-send --adapter mock
-report daily
+op.recon
+op.plan
+op.value
+op.feat
+op.gate
+op.stage
+op.send.mock
+op.report.daily
 ```
 
-For command algorithms, the wrapper always persists `command_output.v1` with captured stdout, stderr, and exit code. Domain products are persisted conservatively as SQLite storage references where the command output or existing tables identify the artifact.
+For Rust-operation algorithms, the executor still persists `command_output.v1`
+with the stdout/stderr/exit-code shape for compatibility with existing product
+contracts. Domain products are persisted conservatively as SQLite storage
+references where the operation output or existing tables identify the artifact.
 
 ## 10. Safety Boundary
 

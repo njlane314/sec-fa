@@ -130,7 +130,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.adapter, "adapter", "mock", "broker adapter for submitd")
 	flag.StringVar(&cfg.modelCommand, "model-command", "value", "pland command: plan, value, or both")
 	flag.StringVar(&cfg.ntfyTopic, "ntfy-topic", getenv("NTFY_TOPIC", ""), "ntfy topic for notifyd")
-	flag.IntVar(&cfg.watchLimit, "watch-limit", 10, "filings inspected per CIK by watchd")
+	flag.IntVar(&cfg.watchLimit, "watch-limit", 20, "filings inspected per CIK by watchd")
 	flag.IntVar(&cfg.workLimit, "work-limit", 100, "work rows handled per cycle")
 	flag.IntVar(&cfg.maxAttempts, "max-attempts", 5, "attempts before marking work dead")
 	flag.BoolVar(&cfg.once, "once", false, "run one cycle and exit")

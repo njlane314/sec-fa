@@ -1,4 +1,4 @@
-% Facts to materialize from workflow JSON and database:
+% Facts to materialize from workflow .flow and database:
 %
 % node(Node).
 % product(Product).
@@ -56,6 +56,11 @@ deny("BROKER_EVENT_REQUIRES_STAGED_ORDER", Node, Product) :-
     produces(Node, Product),
     broker_event_product(Product),
     not has_staged_order_parent(Product).
+
+deny("BROKER_EVENT_REQUIRES_RECONCILIATION", Node, Product) :-
+    produces(Node, Product),
+    broker_event_product(Product),
+    not has_reconciliation_parent(Product).
 
 deny("GRAPH_MUST_BE_ACYCLIC", From, To) :-
     edge(From, To),

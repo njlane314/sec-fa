@@ -7,11 +7,14 @@
 
 namespace {
 
-void require(bool condition) {
+void require_at(bool condition, const char* file, int line) {
     if (!condition) {
+        std::fprintf(stderr, "require failed: %s:%d\n", file, line);
         std::abort();
     }
 }
+
+#define require(condition) require_at((condition), __FILE__, __LINE__)
 
 double absd(double value) {
     return value < 0.0 ? -value : value;
@@ -123,6 +126,30 @@ fa_canonical_fact_v1 canonical_fact(uint64_t security_id,
     fact.observation_status = FA_OBSERVATION_SELECTED;
     fact.duration_days = 91u;
     fact.dimensions_hash = 0x44136fa355b3678au;
+    return fact;
+}
+
+fa_canonical_fact_v1 annual_fact(uint64_t security_id,
+                                 int32_t metric_id,
+                                 double value,
+                                 int64_t start_day,
+                                 int64_t end_day) {
+    fa_canonical_fact_v1 fact = canonical_fact(security_id, metric_id, value, end_day);
+    fact.period_start_day = start_day;
+    fact.period_semantics = FA_PERIOD_FISCAL_YEAR;
+    fact.duration_days = static_cast<uint32_t>(end_day - start_day + 1);
+    return fact;
+}
+
+fa_canonical_fact_v1 ytd_fact(uint64_t security_id,
+                              int32_t metric_id,
+                              double value,
+                              int64_t start_day,
+                              int64_t end_day) {
+    fa_canonical_fact_v1 fact = canonical_fact(security_id, metric_id, value, end_day);
+    fact.period_start_day = start_day;
+    fact.period_semantics = FA_PERIOD_FISCAL_YTD;
+    fact.duration_days = static_cast<uint32_t>(end_day - start_day + 1);
     return fact;
 }
 
@@ -260,6 +287,85 @@ void test_statement_builder_from_canonical_observations() {
     fa_statement_build_output_free_v1(&statements);
 }
 
+void test_statement_builder_uses_annual_ytd_bridge_for_ttm_cash_flow() {
+    fa_security_v1 securities[1] = {
+        security(1, "AAA", 10.0, 50000000.0),
+    };
+
+    fa_canonical_fact_v1 facts[16]{};
+    int n = 0;
+    const int64_t prior_start = 1000;
+    const int64_t prior_ytd_end = 1180;
+    const int64_t annual_end = 1364;
+    const int64_t current_start = 1365;
+    const int64_t anchor = 1545;
+
+    facts[n++] = annual_fact(1, FA_METRIC_REVENUE, 1000.0, prior_start, annual_end);
+    facts[n++] = ytd_fact(1, FA_METRIC_REVENUE, 400.0, prior_start, prior_ytd_end);
+    facts[n++] = ytd_fact(1, FA_METRIC_REVENUE, 500.0, current_start, anchor);
+    facts[n++] = canonical_fact(1, FA_METRIC_REVENUE, 250.0, anchor);
+
+    facts[n++] = annual_fact(1, FA_METRIC_OPERATING_CASH_FLOW, 100.0, prior_start, annual_end);
+    facts[n++] = ytd_fact(1, FA_METRIC_OPERATING_CASH_FLOW, 40.0, prior_start, prior_ytd_end);
+    facts[n++] = ytd_fact(1, FA_METRIC_OPERATING_CASH_FLOW, 70.0, current_start, anchor);
+
+    facts[n++] = annual_fact(1, FA_METRIC_CAPEX, 20.0, prior_start, annual_end);
+    facts[n++] = ytd_fact(1, FA_METRIC_CAPEX, 8.0, prior_start, prior_ytd_end);
+    facts[n++] = ytd_fact(1, FA_METRIC_CAPEX, 12.0, current_start, anchor);
+
+    facts[n++] = annual_fact(1, FA_METRIC_NET_INCOME, 100.0, prior_start, annual_end);
+    facts[n++] = ytd_fact(1, FA_METRIC_NET_INCOME, 40.0, prior_start, prior_ytd_end);
+    facts[n++] = ytd_fact(1, FA_METRIC_NET_INCOME, 60.0, current_start, anchor);
+    facts[n++] = canonical_fact(1, FA_METRIC_DILUTED_SHARES, 100.0, anchor);
+    facts[n++] = instant_fact(1, FA_METRIC_CASH, 50.0, anchor);
+    facts[n++] = instant_fact(1, FA_METRIC_DEBT, 10.0, anchor);
+    require(n == 16);
+
+    fa_model_config_v1 config = model_config();
+    fa_risk_limits_v1 limits = fresh_limits();
+
+    fa_statement_build_output_v1 statements{};
+    fa_status_code status = fa_build_statement_snapshots_v1(
+        facts, static_cast<size_t>(n), securities, 1u, &config, &limits, &statements);
+    require(status == FA_OK);
+    require(statements.statement_count >= 1u);
+    require(absd(statements.statements[0].operating_cash_flow_usd - 130.0) < 0.001);
+    require(absd(statements.statements[0].capex_usd - 24.0) < 0.001);
+    require(absd(statements.statements[0].free_cash_flow_usd - 106.0) < 0.001);
+    require((statements.statements[0].quality_flags & FA_STMT_DERIVED_TTM) != 0u);
+    require((statements.statements[0].quality_flags & FA_STMT_MISSING_CAPEX) == 0u);
+
+    fa_statement_build_output_free_v1(&statements);
+}
+
+void test_statement_builder_flags_missing_cash_flow_components() {
+    fa_security_v1 securities[1] = {
+        security(1, "AAA", 10.0, 50000000.0),
+    };
+
+    fa_canonical_fact_v1 facts[8]{};
+    int n = 0;
+    const int64_t ends[4] = {19000, 19091, 19182, 19273};
+    for (int i = 0; i < 4; ++i) {
+        facts[n++] = canonical_fact(1, FA_METRIC_REVENUE, 100.0, ends[i]);
+        facts[n++] = canonical_fact(1, FA_METRIC_OPERATING_CASH_FLOW, 20.0, ends[i]);
+    }
+
+    fa_model_config_v1 config = model_config();
+    fa_risk_limits_v1 limits = fresh_limits();
+
+    fa_statement_build_output_v1 statements{};
+    fa_status_code status = fa_build_statement_snapshots_v1(
+        facts, static_cast<size_t>(n), securities, 1u, &config, &limits, &statements);
+    require(status == FA_OK);
+    require(statements.statement_count == 1u);
+    require(statements.statements[0].free_cash_flow_usd == 0.0);
+    require((statements.statements[0].quality_flags & FA_STMT_MISSING_CAPEX) != 0u);
+    require((statements.statements[0].quality_flags & FA_STMT_LOW_CONFIDENCE) != 0u);
+
+    fa_statement_build_output_free_v1(&statements);
+}
+
 void test_value_rejects_missing_or_invalid_scenarios() {
     fa_security_v1 securities[1] = {
         security(1, "AAA", 10.0, 50000000.0),
@@ -352,6 +458,8 @@ void test_value_low_confidence_statement_does_not_create_intent() {
 int main() {
     test_value_happy_path();
     test_statement_builder_from_canonical_observations();
+    test_statement_builder_uses_annual_ytd_bridge_for_ttm_cash_flow();
+    test_statement_builder_flags_missing_cash_flow_components();
     test_value_rejects_missing_or_invalid_scenarios();
     test_value_filters_stale_statements();
     test_value_low_confidence_statement_does_not_create_intent();

@@ -10,7 +10,7 @@ use time::macros::format_description;
 use time::Date;
 use uuid::Uuid;
 
-const RESOLVER_VERSION: &str = "canonical_resolver_v3";
+const RESOLVER_VERSION: &str = "canonical_resolver_v4";
 const TOTAL_DIMENSIONS_JSON: &str = "{}";
 const SEC_ARCHIVE_BASE_URL: &str = "https://www.sec.gov/Archives/edgar/data";
 const QUALITY_DIMENSIONAL_FACT: i64 = 1 << 16;
@@ -1281,6 +1281,72 @@ fn concept_candidate(key: &str) -> Option<CanonicalConcept> {
             priority: 3,
             unit: "USD",
         }),
+        "us-gaap:GrossProfit" => Some(CanonicalConcept {
+            metric_id: 9,
+            basis_id: 901,
+            priority: 1,
+            unit: "USD",
+        }),
+        "us-gaap:OperatingIncomeLoss" => Some(CanonicalConcept {
+            metric_id: 10,
+            basis_id: 1001,
+            priority: 1,
+            unit: "USD",
+        }),
+        "us-gaap:ResearchAndDevelopmentExpense" => Some(CanonicalConcept {
+            metric_id: 11,
+            basis_id: 1101,
+            priority: 1,
+            unit: "USD",
+        }),
+        "us-gaap:ShareBasedCompensation" => Some(CanonicalConcept {
+            metric_id: 12,
+            basis_id: 1201,
+            priority: 1,
+            unit: "USD",
+        }),
+        "us-gaap:AllocatedShareBasedCompensationExpense" => Some(CanonicalConcept {
+            metric_id: 12,
+            basis_id: 1202,
+            priority: 2,
+            unit: "USD",
+        }),
+        "us-gaap:InterestExpenseNonoperating" => Some(CanonicalConcept {
+            metric_id: 13,
+            basis_id: 1301,
+            priority: 1,
+            unit: "USD",
+        }),
+        "us-gaap:InterestExpense" => Some(CanonicalConcept {
+            metric_id: 13,
+            basis_id: 1302,
+            priority: 2,
+            unit: "USD",
+        }),
+        "us-gaap:InterestExpenseDebt" => Some(CanonicalConcept {
+            metric_id: 13,
+            basis_id: 1303,
+            priority: 3,
+            unit: "USD",
+        }),
+        "us-gaap:PaymentsForRepurchaseOfCommonStock" => Some(CanonicalConcept {
+            metric_id: 14,
+            basis_id: 1401,
+            priority: 1,
+            unit: "USD",
+        }),
+        "us-gaap:StockRepurchasedAndRetiredDuringPeriodValue" => Some(CanonicalConcept {
+            metric_id: 14,
+            basis_id: 1402,
+            priority: 2,
+            unit: "USD",
+        }),
+        "us-gaap:StockRepurchasedDuringPeriodValue" => Some(CanonicalConcept {
+            metric_id: 14,
+            basis_id: 1403,
+            priority: 3,
+            unit: "USD",
+        }),
         _ => None,
     }
 }
@@ -1295,12 +1361,18 @@ fn metric_name(metric_id: i64) -> &'static str {
         6 => "capex",
         7 => "cash",
         8 => "debt",
+        9 => "gross_profit",
+        10 => "operating_income",
+        11 => "research_and_development",
+        12 => "stock_based_compensation",
+        13 => "interest_expense",
+        14 => "buybacks",
         _ => "unknown",
     }
 }
 fn metric_kind(metric_id: i64) -> &'static str {
     match metric_id {
-        1 | 2 | 4 | 5 | 6 => "flow",
+        1 | 2 | 4 | 5 | 6 | 9 | 10 | 11 | 12 | 13 | 14 => "flow",
         3 => "per_share_flow",
         7 | 8 => "instant",
         _ => "unknown",

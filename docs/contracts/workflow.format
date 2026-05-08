@@ -1,0 +1,28 @@
+# sec-fa workflow .flow format
+#
+# Workflow specs are authored as line-oriented `.flow` files. The format is
+# intentionally not JSON, XML, YAML, or a programming language. Each nonblank
+# line starts with one directive. `#` starts a comment outside quoted strings.
+#
+# Top-level directives:
+#   workflow <name>
+#   driver <driver_id>
+#   mode <halted|observe|shadow|stage|paper|live_limited|live>
+#   decision_as_of <UTC-instant>
+#   allow_external_write <true|false>
+#   allow_broker_resource <true|false>
+#   layer <layer> [parent <parent_layer>] key <field>...
+#   resource <id> <kind> [max_concurrent <n>] [min_interval_ms <n>] [allowed_modes <csv>] [hazard_class <A|B|C>]
+#
+# Node block:
+#   node <node_id>
+#     alg <algorithm_id>
+#     cell <layer> <key=value>...
+#     input <role> from <node_id>.<role>
+#     set <config_key> <value>
+#     output <role> <product_type>
+#   end
+#
+# Values are parsed as bool, integer, float, or string in that order.
+# Quote strings with spaces. Cell keys and config are canonicalized internally
+# before hashing, but the authoritative workflow surface is this `.flow` text.

@@ -94,11 +94,20 @@ pub fn seed_product_graph_reference_data(conn: &Connection) -> Result<()> {
 pub fn seed_product_types(conn: &Connection) -> Result<()> {
     let parsed: ProductTypeBootstrap = serde_json::from_str(PRODUCT_TYPES_JSON)?;
     if parsed.spec_version != 1 {
-        anyhow::bail!("unsupported product type bootstrap spec_version={}", parsed.spec_version);
+        anyhow::bail!(
+            "unsupported product type bootstrap spec_version={}",
+            parsed.spec_version
+        );
     }
     for row in parsed.product_types {
         conn.execute(
-            "INSERT OR IGNORE INTO product_types(product_type, schema_name, schema_version, hazard_class, description) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO product_types(product_type, schema_name, schema_version, hazard_class, description)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(product_type) DO UPDATE SET
+               schema_name=excluded.schema_name,
+               schema_version=excluded.schema_version,
+               hazard_class=excluded.hazard_class,
+               description=excluded.description",
             params![
                 row.product_type,
                 row.schema_name,
@@ -121,7 +130,21 @@ pub fn seed_algorithm_registry(conn: &Connection) -> Result<()> {
     }
     for row in parsed.algorithms {
         conn.execute(
-            "INSERT OR IGNORE INTO algorithm_registry(algorithm_id, algorithm_name, algorithm_version, hazard_class, purity, deterministic, executable_kind, executable_ref, input_contract_json, output_contract_json, resource_contract_json, forbidden_resource_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            "INSERT INTO algorithm_registry(algorithm_id, algorithm_name, algorithm_version, hazard_class, purity, deterministic, executable_kind, executable_ref, input_contract_json, output_contract_json, resource_contract_json, forbidden_resource_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+             ON CONFLICT(algorithm_id) DO UPDATE SET
+               algorithm_name=excluded.algorithm_name,
+               algorithm_version=excluded.algorithm_version,
+               hazard_class=excluded.hazard_class,
+               purity=excluded.purity,
+               deterministic=excluded.deterministic,
+               executable_kind=excluded.executable_kind,
+               executable_ref=excluded.executable_ref,
+               input_contract_json=excluded.input_contract_json,
+               output_contract_json=excluded.output_contract_json,
+               resource_contract_json=excluded.resource_contract_json,
+               forbidden_resource_json=excluded.forbidden_resource_json,
+               created_at=excluded.created_at",
             params![
                 row.algorithm_id,
                 row.algorithm_name,
@@ -144,7 +167,15 @@ pub fn seed_algorithm_registry(conn: &Connection) -> Result<()> {
 pub fn seed_resource_declarations(conn: &Connection) -> Result<()> {
     for resource in known_resource_declarations() {
         conn.execute(
-            "INSERT OR IGNORE INTO resource_declarations(resource_id, resource_kind, max_concurrent, min_interval_ms, allowed_modes_json, hazard_class, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO resource_declarations(resource_id, resource_kind, max_concurrent, min_interval_ms, allowed_modes_json, hazard_class, description)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(resource_id) DO UPDATE SET
+               resource_kind=excluded.resource_kind,
+               max_concurrent=excluded.max_concurrent,
+               min_interval_ms=excluded.min_interval_ms,
+               allowed_modes_json=excluded.allowed_modes_json,
+               hazard_class=excluded.hazard_class,
+               description=excluded.description",
             params![
                 resource.resource_id,
                 resource.resource_kind,
@@ -316,10 +347,7 @@ pub fn load_algorithm(conn: &Connection, algorithm_id: &str) -> Result<Option<Al
     .with_context(|| format!("loading algorithm {algorithm_id}"))
 }
 
-pub fn load_resource(
-    conn: &Connection,
-    resource_id: &str,
-) -> Result<Option<ResourceDeclaration>> {
+pub fn load_resource(conn: &Connection, resource_id: &str) -> Result<Option<ResourceDeclaration>> {
     conn.query_row(
         "SELECT resource_id, resource_kind, max_concurrent, min_interval_ms, allowed_modes_json, hazard_class, description FROM resource_declarations WHERE resource_id=?",
         [resource_id],

@@ -37,6 +37,20 @@
       "description": "Model-consumable statement snapshots built from canonical observations."
     },
     {
+      "product_type": "feature_snapshot_set.v1",
+      "schema_name": "feature_snapshot_set",
+      "schema_version": 1,
+      "hazard_class": "B",
+      "description": "Point-in-time feature rows materialized from statement snapshots."
+    },
+    {
+      "product_type": "forecast_set.v1",
+      "schema_name": "forecast_set",
+      "schema_version": 1,
+      "hazard_class": "A",
+      "description": "Forecast outputs from the baseline portfolio planner."
+    },
+    {
       "product_type": "valuation_set.v1",
       "schema_name": "valuation_set",
       "schema_version": 1,
