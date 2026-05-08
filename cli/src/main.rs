@@ -1,4 +1,5 @@
 mod fa_core;
+mod framework;
 
 use crate::fa_core::*;
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -307,6 +308,58 @@ enum Command {
         #[arg(long = "ntfy-topic", default_value = "")]
         ntfy_topic: String,
     },
+    Graph {
+        #[command(subcommand)]
+        command: GraphCommand,
+    },
+    Product {
+        #[command(subcommand)]
+        command: ProductCommand,
+    },
+    Replay {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long = "workflow-run-id")]
+        workflow_run_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum GraphCommand {
+    Validate {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        spec: PathBuf,
+    },
+    Run {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        spec: PathBuf,
+    },
+    Explain {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        spec: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ProductCommand {
+    Show {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long = "product-id")]
+        product_id: String,
+    },
+    Lineage {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long = "product-id")]
+        product_id: String,
+    },
 }
 
 #[derive(Args, Debug, Clone)]
@@ -587,12 +640,18 @@ fn run() -> Result<()> {
             priority,
             ntfy_topic,
         }) => cmd_ping(&method, &title, &message, &priority, &ntfy_topic),
+        Some(Command::Graph { command }) => cmd_graph(command),
+        Some(Command::Product { command }) => cmd_product(command),
+        Some(Command::Replay {
+            db,
+            workflow_run_id,
+        }) => cmd_replay(&db, &workflow_run_id),
     }
 }
 
 fn print_help() {
     println!("usage: sec <command> [options]\n");
-    println!("commands: init sym import-securities ingest-universe databento pos watch pull xbrl univ recon plan value gate stage send mode halt stat report ping");
+    println!("commands: init sym import-securities ingest-universe databento pos watch pull xbrl univ recon plan value gate stage send mode halt stat report ping graph product replay");
 }
 
 fn open_db(path: &Path) -> Result<Connection> {
@@ -615,6 +674,9 @@ fn ensure_db(conn: &Connection) -> Result<()> {
             "database is not initialized; run `init` or `init --db <path>` first",
         )
     } else {
+        let schema = load_schema_sql()?;
+        conn.execute_batch(&schema)?;
+        framework::registry::seed_product_graph_reference_data(conn)?;
         Ok(())
     }
 }
@@ -628,6 +690,7 @@ fn cmd_init(db_path: &Path) -> Result<()> {
     conn.execute_batch(&schema)?;
     seed_metric_concept_candidates(&conn)?;
     insert_total_dimension_signature(&conn)?;
+    framework::registry::seed_product_graph_reference_data(&conn)?;
     json_line(&json!({"db": db_path, "status": "initialized"}))
 }
 
@@ -2227,6 +2290,89 @@ fn cmd_ping(
     fail(1, format!("unsupported notify method {method:?}"))
 }
 
+fn cmd_graph(command: GraphCommand) -> Result<()> {
+    match command {
+        GraphCommand::Validate { db, spec } => {
+            let conn = open_db(&db)?;
+            ensure_db(&conn)?;
+            let parsed = framework::graph::load_workflow_spec(&spec)?;
+            let (report, valid) = framework::graph::validate_workflow(&conn, parsed)?;
+            json_line(&report)?;
+            if valid.is_none() {
+                return fail(3, "workflow rejected");
+            }
+            Ok(())
+        }
+        GraphCommand::Run { db, spec } => {
+            let mut conn = open_db(&db)?;
+            ensure_db(&conn)?;
+            let parsed = framework::graph::load_workflow_spec(&spec)?;
+            let (report, valid) = framework::graph::validate_workflow(&conn, parsed)?;
+            json_line(&report)?;
+            let Some(validated) = valid else {
+                return fail(3, "workflow rejected");
+            };
+            framework::executor::run_validated_workflow(&mut conn, &db, validated)?;
+            Ok(())
+        }
+        GraphCommand::Explain { db, spec } => {
+            let conn = open_db(&db)?;
+            ensure_db(&conn)?;
+            let parsed = framework::graph::load_workflow_spec(&spec)?;
+            let (report, valid) = framework::graph::validate_workflow(&conn, parsed)?;
+            let Some(validated) = valid else {
+                json_line(&report)?;
+                return fail(3, "workflow rejected");
+            };
+            let mut nodes = Vec::<Value>::new();
+            for node_id in &validated.order {
+                let node = framework::graph::node_by_id(&validated.parsed.spec, node_id)
+                    .ok_or_else(|| anyhow!("validated node {node_id} missing"))?;
+                let algorithm = framework::registry::load_algorithm(&conn, &node.algorithm)?
+                    .ok_or_else(|| anyhow!("algorithm {} missing", node.algorithm))?;
+                nodes.push(json!({
+                    "node_id": node.node_id,
+                    "algorithm_id": algorithm.algorithm_id,
+                    "cell_id": framework::graph::cell_id(node)?,
+                    "resources": algorithm.resources,
+                    "outputs": node.outputs,
+                }));
+            }
+            json_line(&json!({
+                "event": "workflow_explained",
+                "workflow_name": validated.parsed.spec.workflow_name,
+                "workflow_spec_sha256": validated.parsed.spec_sha256,
+                "topological_order": validated.order,
+                "edge_count": validated.edges.len(),
+                "nodes": nodes
+            }))
+        }
+    }
+}
+
+fn cmd_product(command: ProductCommand) -> Result<()> {
+    match command {
+        ProductCommand::Show { db, product_id } => {
+            let conn = open_db(&db)?;
+            ensure_db(&conn)?;
+            framework::storage::print_product(&conn, &product_id)
+        }
+        ProductCommand::Lineage { db, product_id } => {
+            let conn = open_db(&db)?;
+            ensure_db(&conn)?;
+            framework::storage::print_lineage(&conn, &product_id)
+        }
+    }
+}
+
+fn cmd_replay(db_path: &Path, workflow_run_id: &str) -> Result<()> {
+    let conn = open_db(db_path)?;
+    ensure_db(&conn)?;
+    let result = framework::replay::replay_workflow(&conn, workflow_run_id)?;
+    println!("{}", framework::canonical_json::to_canonical_json(&result)?);
+    Ok(())
+}
+
 fn ensure_assumptions(conn: &Connection, operator: &str) -> Result<(String, String)> {
     let assumptions = json!({
         "scenario_count": 3,
@@ -2634,5 +2780,30 @@ mod tests {
         assert_eq!(seeds[0].price_usd, 110.0);
         assert_eq!(seeds[0].adv_usd, 1600.0);
         assert!(seeds[0].investable);
+    }
+
+
+    #[test]
+    fn graph_run_preserves_existing_cli() {
+        use clap::CommandFactory;
+
+        let help = Cli::command().render_long_help().to_string();
+        for command in [
+            "init", "sym", "watch", "pull", "xbrl", "univ", "recon", "plan", "value", "gate",
+            "stage", "send", "report", "ping",
+        ] {
+            assert!(help.contains(command), "help missing {command}");
+        }
+        assert!(Cli::try_parse_from(["sec", "init", "--db", ".fa.db"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "sec",
+            "graph",
+            "validate",
+            "--db",
+            ".fa.db",
+            "--spec",
+            "tests/fixtures/workflow_noop.json",
+        ])
+        .is_ok());
     }
 }

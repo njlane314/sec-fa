@@ -1,0 +1,41 @@
+{
+  "spec_version": 1,
+  "workflow_name": "noop_fixture",
+  "driver": {
+    "driver_id": "test.v1",
+    "mode": "observe",
+    "decision_as_of": "2026-05-08T13:00:00.000Z",
+    "allow_external_write": false,
+    "allow_broker_resource": false
+  },
+  "layers": [
+    {
+      "layer": "job",
+      "parent": null,
+      "key_fields": ["workflow_name"]
+    }
+  ],
+  "resources": [],
+  "nodes": [
+    {
+      "node_id": "noop",
+      "algorithm": "noop.test.v1",
+      "cell": {
+        "layer": "job",
+        "key": {
+          "workflow_name": "noop_fixture"
+        }
+      },
+      "config": {
+        "message": "test"
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "role": "output",
+          "product_type": "command_output.v1"
+        }
+      ]
+    }
+  ]
+}

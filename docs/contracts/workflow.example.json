@@ -1,0 +1,198 @@
+{
+  "spec_version": 1,
+  "workflow_name": "shadow_value_pipeline",
+  "driver": {
+    "driver_id": "point_in_time_shadow.v1",
+    "mode": "shadow",
+    "decision_as_of": "2026-05-08T13:00:00.000Z",
+    "allow_external_write": false,
+    "allow_broker_resource": false
+  },
+  "layers": [
+    {
+      "layer": "job",
+      "parent": null,
+      "key_fields": ["workflow_name", "decision_as_of"]
+    },
+    {
+      "layer": "issuer",
+      "parent": "job",
+      "key_fields": ["cik"]
+    },
+    {
+      "layer": "accession",
+      "parent": "issuer",
+      "key_fields": ["cik", "accession_number"]
+    },
+    {
+      "layer": "portfolio",
+      "parent": "job",
+      "key_fields": ["portfolio_id"]
+    },
+    {
+      "layer": "decision_run",
+      "parent": "portfolio",
+      "key_fields": ["workflow_run_id"]
+    }
+  ],
+  "resources": [
+    {
+      "resource_id": "sqlite.local",
+      "resource_kind": "sqlite",
+      "max_concurrent": 1,
+      "min_interval_ms": 0,
+      "allowed_modes": ["observe", "shadow", "stage", "paper", "live_limited", "live", "halted"],
+      "hazard_class": "B"
+    },
+    {
+      "resource_id": "sec.http",
+      "resource_kind": "sec_http",
+      "max_concurrent": 1,
+      "min_interval_ms": 150,
+      "allowed_modes": ["observe", "shadow", "stage", "paper", "live_limited", "live"],
+      "hazard_class": "B"
+    },
+    {
+      "resource_id": "broker.adapter",
+      "resource_kind": "broker",
+      "max_concurrent": 1,
+      "min_interval_ms": 0,
+      "allowed_modes": ["paper", "live_limited", "live"],
+      "hazard_class": "A"
+    }
+  ],
+  "nodes": [
+    {
+      "node_id": "reconcile",
+      "algorithm": "cmd.recon.v1",
+      "cell": {
+        "layer": "portfolio",
+        "key": {
+          "portfolio_id": "default"
+        }
+      },
+      "config": {
+        "portfolio_value_usd": 100000.0,
+        "cash_usd": 100000.0,
+        "reconciled": true
+      },
+      "inputs": [],
+      "outputs": [
+        {
+          "role": "reconciliation",
+          "product_type": "reconciliation_snapshot.v1"
+        }
+      ]
+    },
+    {
+      "node_id": "value",
+      "algorithm": "cmd.value.v1",
+      "cell": {
+        "layer": "decision_run",
+        "key": {
+          "portfolio_id": "default"
+        }
+      },
+      "config": {
+        "core_lib": "build/libfolio.so",
+        "portfolio_value_usd": 100000.0,
+        "cash_usd": 100000.0,
+        "target_gross_exposure_ratio": 0.50,
+        "max_name_weight_ratio": 0.05,
+        "max_order_notional_usd": 10000.0,
+        "min_adv_usd": 1000000.0,
+        "max_adv_participation_ratio": 0.01,
+        "max_reconciliation_age_s": 3600
+      },
+      "inputs": [
+        {
+          "from": "reconcile",
+          "role": "reconciliation"
+        }
+      ],
+      "outputs": [
+        {
+          "role": "statement_snapshots",
+          "product_type": "statement_snapshot_set.v1"
+        },
+        {
+          "role": "valuations",
+          "product_type": "valuation_set.v1"
+        },
+        {
+          "role": "target_weights",
+          "product_type": "target_weight_set.v1"
+        },
+        {
+          "role": "order_intents",
+          "product_type": "order_intent_set.v1"
+        }
+      ]
+    },
+    {
+      "node_id": "gate",
+      "algorithm": "cmd.gate.v1",
+      "cell": {
+        "layer": "decision_run",
+        "key": {
+          "portfolio_id": "default"
+        }
+      },
+      "config": {
+        "core_lib": "build/libfolio.so",
+        "portfolio_value_usd": 100000.0,
+        "cash_usd": 100000.0,
+        "max_name_weight_ratio": 0.05,
+        "max_order_notional_usd": 10000.0,
+        "min_adv_usd": 1000000.0,
+        "max_adv_participation_ratio": 0.01,
+        "max_reconciliation_age_s": 3600
+      },
+      "inputs": [
+        {
+          "from": "value",
+          "role": "order_intents"
+        },
+        {
+          "from": "reconcile",
+          "role": "reconciliation"
+        }
+      ],
+      "outputs": [
+        {
+          "role": "risk_decisions",
+          "product_type": "risk_decision_set.v1"
+        }
+      ]
+    },
+    {
+      "node_id": "report",
+      "algorithm": "cmd.report.daily.v1",
+      "cell": {
+        "layer": "job",
+        "key": {
+          "report": "daily"
+        }
+      },
+      "config": {
+        "date": "today"
+      },
+      "inputs": [
+        {
+          "from": "value",
+          "role": "valuations"
+        },
+        {
+          "from": "gate",
+          "role": "risk_decisions"
+        }
+      ],
+      "outputs": [
+        {
+          "role": "report",
+          "product_type": "report.v1"
+        }
+      ]
+    }
+  ]
+}

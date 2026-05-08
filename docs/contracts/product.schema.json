@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sec-fa.local/contracts/product.schema.json",
+  "title": "Product graph product",
+  "type": "object",
+  "required": [
+    "product_type",
+    "schema_name",
+    "schema_version",
+    "cell_id",
+    "content_sha256",
+    "storage_kind",
+    "storage_ref",
+    "created_by_algorithm",
+    "algorithm_version",
+    "config_sha256",
+    "available_at",
+    "hazard_class"
+  ],
+  "properties": {
+    "product_id": {"type": "string", "pattern": "^prod_[0-9a-f]{48}$"},
+    "product_type": {"type": "string"},
+    "schema_name": {"type": "string"},
+    "schema_version": {"type": "integer", "minimum": 1},
+    "cell_id": {"type": "string"},
+    "family_id": {"type": ["string", "null"]},
+    "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "storage_kind": {"type": "string"},
+    "storage_ref": {"type": "string"},
+    "created_by_algorithm": {"type": "string"},
+    "algorithm_version": {"type": "string"},
+    "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "code_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "available_at": {"type": "string"},
+    "hazard_class": {"enum": ["A", "B", "C"]},
+    "parents": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sec-fa.local/contracts/algorithm.schema.json",
+  "title": "Product graph algorithm registry entry",
+  "type": "object",
+  "required": [
+    "algorithm_id",
+    "algorithm_name",
+    "algorithm_version",
+    "hazard_class",
+    "purity",
+    "deterministic",
+    "executable_kind",
+    "executable_ref",
+    "inputs",
+    "outputs",
+    "resources",
+    "forbidden_resources"
+  ],
+  "properties": {
+    "algorithm_id": {"type": "string"},
+    "algorithm_name": {"type": "string"},
+    "algorithm_version": {"type": "string"},
+    "hazard_class": {"enum": ["A", "B", "C"]},
+    "purity": {"enum": ["pure", "deterministic_io", "external_read", "external_write"]},
+    "deterministic": {"type": "boolean"},
+    "executable_kind": {"enum": ["builtin", "command", "c_abi", "noop_test"]},
+    "executable_ref": {"type": "string"},
+    "inputs": {"type": "array", "items": {"type": "string"}},
+    "outputs": {"type": "array", "items": {"type": "string"}},
+    "resources": {"type": "array", "items": {"type": "string"}},
+    "forbidden_resources": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

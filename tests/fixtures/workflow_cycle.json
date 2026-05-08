@@ -1,0 +1,73 @@
+{
+  "spec_version": 1,
+  "workflow_name": "cycle_fixture",
+  "driver": {
+    "driver_id": "test.v1",
+    "mode": "observe",
+    "decision_as_of": "2026-05-08T13:00:00.000Z",
+    "allow_external_write": false,
+    "allow_broker_resource": false
+  },
+  "layers": [
+    {
+      "layer": "job",
+      "parent": null,
+      "key_fields": ["workflow_name"]
+    }
+  ],
+  "resources": [],
+  "nodes": [
+    {
+      "node_id": "a",
+      "algorithm": "noop.test.v1",
+      "cell": {
+        "layer": "job",
+        "key": {
+          "workflow_name": "cycle_fixture",
+          "node": "a"
+        }
+      },
+      "config": {
+        "message": "a"
+      },
+      "inputs": [
+        {
+          "from": "b",
+          "role": "output"
+        }
+      ],
+      "outputs": [
+        {
+          "role": "output",
+          "product_type": "command_output.v1"
+        }
+      ]
+    },
+    {
+      "node_id": "b",
+      "algorithm": "noop.test.v1",
+      "cell": {
+        "layer": "job",
+        "key": {
+          "workflow_name": "cycle_fixture",
+          "node": "b"
+        }
+      },
+      "config": {
+        "message": "b"
+      },
+      "inputs": [
+        {
+          "from": "a",
+          "role": "output"
+        }
+      ],
+      "outputs": [
+        {
+          "role": "output",
+          "product_type": "command_output.v1"
+        }
+      ]
+    }
+  ]
+}

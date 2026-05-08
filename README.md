@@ -64,6 +64,7 @@ Implemented:
 - Batch issuer ingest that discovers, fetches, and parses financial 10-K/10-Q filings only.
 - Databento-backed seed CSV generation for limited explicit stock symbol lists.
 - Auditable model assumptions, statement snapshots, valuations, forecast outcomes, and autonomy controls.
+- Product graph infrastructure for typed products, workflow validation, sequential noop execution, lineage, and deterministic replay checks.
 - SQLite-backed durable daemon workers for SEC discovery, raw pulls, XBRL parsing, planning, risk gating, staging, guarded submission, reconciliation, and notification.
 - CI check script, CMake build, unit test, and schema files.
 - Philosophy, requirements, hazards, coding standard, naming standard, and operations documents.
@@ -106,6 +107,29 @@ feed, `pull` chooses package files from the accession `index.json`, and `xbrl`
 uses the stored filing metadata. A real SEC User-Agent can be supplied once with
 `SEC_USER_AGENT` or per command with `--user-agent`.
 
+## Product graph
+
+`sec graph` wraps existing commands with typed products, lineage, and invariant
+checks. The first no-network fixture runs a deterministic noop workflow:
+
+```sh
+DB=.fa.db
+./sec init --db "$DB"
+./sec graph validate --db "$DB" --spec tests/fixtures/workflow_noop.json
+./sec graph run --db "$DB" --spec tests/fixtures/workflow_noop.json
+```
+
+The graph commands print JSONL events. Product inspection and deterministic noop
+replay use the persisted ids:
+
+```sh
+./sec product show --db "$DB" --product-id prod_...
+./sec product lineage --db "$DB" --product-id prod_...
+./sec replay --db "$DB" --workflow-run-id wf_...
+```
+
+See `docs/PRODUCT_GRAPH.md` for the schema, invariants, modes, and safety
+boundary.
 
 ## Accounting observation model
 

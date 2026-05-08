@@ -1,0 +1,62 @@
+% Facts to materialize from workflow JSON and database:
+%
+% node(Node).
+% product(Product).
+% consumes(Node, Product).
+% produces(Node, Product).
+% node_class(Node, Class).
+% product_class(Product, Class).
+% node_mode(Node, Mode).
+% run_as_of(Run, Time).
+% node_run(Node, Run).
+% product_available_at(Product, Time).
+% algorithm_resource(Node, Resource).
+% resource_kind(Resource, Kind).
+% resource_allowed_mode(Resource, Mode).
+% edge(From, To).
+% approved_risk_product(Product).
+% staged_order_product(Product).
+% broker_event_product(Product).
+% reconciliation_product(Product).
+% product_parent(Child, Parent).
+% command_external_write(Node).
+
+deny("NO_LOOKAHEAD", Node, Product) :-
+    consumes(Node, Product),
+    node_run(Node, Run),
+    run_as_of(Run, DecisionTime),
+    product_available_at(Product, AvailableTime),
+    greater_than(AvailableTime, DecisionTime).
+
+deny("NO_CLASS_A_FROM_CLASS_C", Node, Product) :-
+    consumes(Node, Product),
+    node_class(Node, "A"),
+    product_class(Product, "C").
+
+deny("BROKER_RESOURCE_MODE", Node, Resource) :-
+    algorithm_resource(Node, Resource),
+    resource_kind(Resource, "broker"),
+    node_mode(Node, Mode),
+    not resource_allowed_mode(Resource, Mode).
+
+deny("NO_EXTERNAL_WRITE_IN_OBSERVE_OR_SHADOW", Node) :-
+    command_external_write(Node),
+    node_mode(Node, "observe").
+
+deny("NO_EXTERNAL_WRITE_IN_SHADOW", Node) :-
+    command_external_write(Node),
+    node_mode(Node, "shadow").
+
+deny("STAGED_ORDER_REQUIRES_APPROVED_RISK", Node, Product) :-
+    produces(Node, Product),
+    staged_order_product(Product),
+    not has_approved_risk_parent(Product).
+
+deny("BROKER_EVENT_REQUIRES_STAGED_ORDER", Node, Product) :-
+    produces(Node, Product),
+    broker_event_product(Product),
+    not has_staged_order_parent(Product).
+
+deny("GRAPH_MUST_BE_ACYCLIC", From, To) :-
+    edge(From, To),
+    path(To, From).

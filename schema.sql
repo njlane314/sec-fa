@@ -484,6 +484,168 @@ CREATE TABLE IF NOT EXISTS broker_events (
     occurred_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS product_types (
+    product_type TEXT PRIMARY KEY,
+    schema_name TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    hazard_class TEXT NOT NULL CHECK (hazard_class IN ('A','B','C')),
+    description TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS data_products (
+    product_id TEXT PRIMARY KEY,
+    product_type TEXT NOT NULL REFERENCES product_types(product_type),
+    schema_name TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    cell_id TEXT NOT NULL,
+    family_id TEXT,
+    content_sha256 TEXT NOT NULL,
+    storage_kind TEXT NOT NULL,
+    storage_ref TEXT NOT NULL,
+    created_by_algorithm TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    config_sha256 TEXT NOT NULL,
+    code_sha256 TEXT,
+    valid_time_start TEXT,
+    valid_time_end TEXT,
+    source_time TEXT,
+    accepted_at TEXT,
+    ingested_at TEXT,
+    available_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    hazard_class TEXT NOT NULL CHECK (hazard_class IN ('A','B','C')),
+    UNIQUE(product_type, cell_id, content_sha256, created_by_algorithm, config_sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_products_type_cell
+    ON data_products(product_type, cell_id, available_at);
+
+CREATE INDEX IF NOT EXISTS idx_data_products_available
+    ON data_products(available_at);
+
+CREATE TABLE IF NOT EXISTS data_product_lineage (
+    child_product_id TEXT NOT NULL REFERENCES data_products(product_id),
+    parent_product_id TEXT NOT NULL REFERENCES data_products(product_id),
+    role TEXT NOT NULL,
+    PRIMARY KEY(child_product_id, parent_product_id, role)
+);
+
+CREATE TABLE IF NOT EXISTS algorithm_registry (
+    algorithm_id TEXT PRIMARY KEY,
+    algorithm_name TEXT NOT NULL,
+    algorithm_version TEXT NOT NULL,
+    hazard_class TEXT NOT NULL CHECK (hazard_class IN ('A','B','C')),
+    purity TEXT NOT NULL CHECK (purity IN (
+        'pure',
+        'deterministic_io',
+        'external_read',
+        'external_write'
+    )),
+    deterministic INTEGER NOT NULL CHECK (deterministic IN (0,1)),
+    executable_kind TEXT NOT NULL CHECK (executable_kind IN (
+        'builtin',
+        'command',
+        'c_abi',
+        'noop_test'
+    )),
+    executable_ref TEXT NOT NULL,
+    input_contract_json TEXT NOT NULL,
+    output_contract_json TEXT NOT NULL,
+    resource_contract_json TEXT NOT NULL,
+    forbidden_resource_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(algorithm_name, algorithm_version)
+);
+
+-- Run tables are operational index state over append-only data_products,
+-- data_product_lineage, workflow_edges, and graph_invariant_violations.
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    workflow_run_id TEXT PRIMARY KEY,
+    workflow_name TEXT NOT NULL,
+    workflow_spec_sha256 TEXT NOT NULL,
+    driver_json TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    decision_as_of TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'created',
+        'running',
+        'succeeded',
+        'failed',
+        'rejected'
+    )),
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    diagnostics TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS workflow_run_specs (
+    workflow_run_id TEXT PRIMARY KEY REFERENCES workflow_runs(workflow_run_id),
+    workflow_spec_sha256 TEXT NOT NULL,
+    workflow_spec_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_nodes (
+    node_run_id TEXT PRIMARY KEY,
+    workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(workflow_run_id),
+    node_id TEXT NOT NULL,
+    algorithm_id TEXT NOT NULL REFERENCES algorithm_registry(algorithm_id),
+    cell_id TEXT NOT NULL,
+    config_sha256 TEXT NOT NULL,
+    input_product_ids_json TEXT NOT NULL,
+    output_product_ids_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL CHECK (status IN (
+        'created',
+        'ready',
+        'running',
+        'succeeded',
+        'failed',
+        'rejected'
+    )),
+    started_at TEXT,
+    finished_at TEXT,
+    diagnostics TEXT NOT NULL DEFAULT '',
+    UNIQUE(workflow_run_id, node_id, cell_id)
+);
+
+CREATE TABLE IF NOT EXISTS workflow_edges (
+    workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(workflow_run_id),
+    from_node_id TEXT NOT NULL,
+    to_node_id TEXT NOT NULL,
+    product_role TEXT NOT NULL,
+    PRIMARY KEY(workflow_run_id, from_node_id, to_node_id, product_role)
+);
+
+CREATE TABLE IF NOT EXISTS resource_declarations (
+    resource_id TEXT PRIMARY KEY,
+    resource_kind TEXT NOT NULL CHECK (resource_kind IN (
+        'cpu',
+        'sqlite',
+        'filesystem',
+        'sec_http',
+        'market_data_http',
+        'broker',
+        'notification',
+        'clock'
+    )),
+    max_concurrent INTEGER NOT NULL DEFAULT 1,
+    min_interval_ms INTEGER NOT NULL DEFAULT 0,
+    allowed_modes_json TEXT NOT NULL DEFAULT '[]',
+    hazard_class TEXT NOT NULL CHECK (hazard_class IN ('A','B','C')),
+    description TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS graph_invariant_violations (
+    violation_id TEXT PRIMARY KEY,
+    workflow_run_id TEXT REFERENCES workflow_runs(workflow_run_id),
+    invariant_id TEXT NOT NULL,
+    subject_json TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK (severity IN ('error','warning')),
+    explanation TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,

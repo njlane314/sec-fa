@@ -1,0 +1,109 @@
+{
+  "spec_version": 1,
+  "algorithms": [
+    {
+      "algorithm_id": "cmd.recon.v1",
+      "algorithm_name": "cmd.recon",
+      "algorithm_version": "1",
+      "hazard_class": "A",
+      "purity": "deterministic_io",
+      "deterministic": false,
+      "executable_kind": "command",
+      "executable_ref": "sec recon",
+      "inputs": [],
+      "outputs": ["reconciliation_snapshot.v1", "command_output.v1"],
+      "resources": ["sqlite.local"],
+      "forbidden_resources": ["broker.adapter"]
+    },
+    {
+      "algorithm_id": "cmd.value.v1",
+      "algorithm_name": "cmd.value",
+      "algorithm_version": "1",
+      "hazard_class": "A",
+      "purity": "deterministic_io",
+      "deterministic": true,
+      "executable_kind": "command",
+      "executable_ref": "sec value",
+      "inputs": ["reconciliation_snapshot.v1"],
+      "outputs": [
+        "statement_snapshot_set.v1",
+        "valuation_set.v1",
+        "target_weight_set.v1",
+        "order_intent_set.v1",
+        "command_output.v1"
+      ],
+      "resources": ["sqlite.local"],
+      "forbidden_resources": ["sec.http", "broker.adapter", "market_data_http"]
+    },
+    {
+      "algorithm_id": "cmd.gate.v1",
+      "algorithm_name": "cmd.gate",
+      "algorithm_version": "1",
+      "hazard_class": "A",
+      "purity": "deterministic_io",
+      "deterministic": true,
+      "executable_kind": "command",
+      "executable_ref": "sec gate",
+      "inputs": ["order_intent_set.v1", "reconciliation_snapshot.v1"],
+      "outputs": ["risk_decision_set.v1", "command_output.v1"],
+      "resources": ["sqlite.local"],
+      "forbidden_resources": ["sec.http", "broker.adapter", "market_data_http"]
+    },
+    {
+      "algorithm_id": "cmd.stage.v1",
+      "algorithm_name": "cmd.stage",
+      "algorithm_version": "1",
+      "hazard_class": "A",
+      "purity": "deterministic_io",
+      "deterministic": false,
+      "executable_kind": "command",
+      "executable_ref": "sec stage",
+      "inputs": ["risk_decision_set.v1"],
+      "outputs": ["staged_order_set.v1", "command_output.v1"],
+      "resources": ["sqlite.local"],
+      "forbidden_resources": ["broker.adapter"]
+    },
+    {
+      "algorithm_id": "cmd.send.mock.v1",
+      "algorithm_name": "cmd.send.mock",
+      "algorithm_version": "1",
+      "hazard_class": "A",
+      "purity": "external_write",
+      "deterministic": false,
+      "executable_kind": "command",
+      "executable_ref": "sec send --adapter mock",
+      "inputs": ["staged_order_set.v1", "reconciliation_snapshot.v1"],
+      "outputs": ["broker_event_set.v1", "command_output.v1"],
+      "resources": ["sqlite.local", "broker.adapter"],
+      "forbidden_resources": ["sec.http", "market_data_http"]
+    },
+    {
+      "algorithm_id": "cmd.report.daily.v1",
+      "algorithm_name": "cmd.report.daily",
+      "algorithm_version": "1",
+      "hazard_class": "C",
+      "purity": "deterministic_io",
+      "deterministic": false,
+      "executable_kind": "command",
+      "executable_ref": "sec report daily",
+      "inputs": ["valuation_set.v1", "risk_decision_set.v1"],
+      "outputs": ["report.v1", "command_output.v1"],
+      "resources": ["sqlite.local"],
+      "forbidden_resources": ["broker.adapter"]
+    },
+    {
+      "algorithm_id": "noop.test.v1",
+      "algorithm_name": "noop.test",
+      "algorithm_version": "1",
+      "hazard_class": "C",
+      "purity": "pure",
+      "deterministic": true,
+      "executable_kind": "noop_test",
+      "executable_ref": "noop",
+      "inputs": [],
+      "outputs": ["command_output.v1"],
+      "resources": [],
+      "forbidden_resources": ["broker.adapter", "sec.http", "market_data_http"]
+    }
+  ]
+}
